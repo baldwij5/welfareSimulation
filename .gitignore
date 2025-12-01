@@ -1,0 +1,42 @@
+cat > .gitignore << 'EOF'
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Data files (optional - keep data private)
+# Uncomment if you don't want to share data publicly
+# data/*.csv
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model files
+models/*.pkl
+
+# Outputs
+*.log
+EOF
+
+echo "✓ Created .gitignore"
