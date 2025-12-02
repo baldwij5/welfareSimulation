@@ -88,6 +88,11 @@ class Seeker:
             'TANF': 12,  # Every 12 months
             'SSI': 36    # Every 36 months
         }
+        
+        # Bureaucracy navigation capacity (ability to withstand investigation)
+        # Higher = better able to navigate bureaucratic requirements
+        # Based on education, employment, age, organization
+        self.bureaucracy_navigation_points = self._generate_bureaucracy_capacity()
     
     def get_monthly_income(self):
         """Convert annual income to monthly for benefit calculations."""
@@ -312,7 +317,125 @@ class Seeker:
         # Track that seeker applied
         self.num_applications += 1
         
+        # Calculate complexity score
+        application.complexity = self._calculate_complexity(application)
+        
         return application
+    
+    def _calculate_complexity(self, application):
+        """
+        Calculate complexity score for an application (0.0 to 1.0).
+        
+        Factors:
+        - Program type (SSI most complex, SNAP simplest)
+        - Household size (more people = more verification)
+        - Number of children (each child needs verification)
+        - Disability status (medical documentation required)
+        - New vs recertification (new = more paperwork)
+        - Age (elderly have additional rules)
+        
+        Args:
+            application: The application being scored
+            
+        Returns:
+            float: Complexity score (0.0 = simple, 1.0 = very complex)
+        """
+        complexity = 0.0
+        
+        # Base complexity by program
+        program_base = {
+            'SNAP': 0.30,  # Simplest (just income and household)
+            'TANF': 0.50,  # Medium (children, work requirements)
+            'SSI': 0.70    # Most complex (disability verification)
+        }
+        complexity += program_base.get(application.program, 0.40)
+        
+        # Household size (more people = more verification)
+        if self.cps_data:
+            household_size = self.cps_data.get('household_size', 2)
+            complexity += min(0.15, (household_size - 1) * 0.05)
+        
+        # Number of children (each needs verification)
+        if self.num_children:
+            complexity += min(0.10, self.num_children * 0.03)
+        
+        # Disability (requires medical documentation)
+        if self.has_disability:
+            complexity += 0.20
+        
+        # New application vs recertification
+        if self.is_enrolled(application.program):
+            # Recertification - already have records
+            complexity += 0.0
+        else:
+            # New application - more paperwork
+            complexity += 0.15
+        
+        # Age (elderly have additional considerations)
+        if self.age and self.age >= 65:
+            complexity += 0.10
+        
+        # Cap at 1.0
+        return min(1.0, complexity)
+    
+    def _generate_bureaucracy_capacity(self):
+        """
+        Generate bureaucracy navigation capacity (0-20 points).
+        
+        Represents ability to withstand investigation scrutiny:
+        - Provide required documentation
+        - Navigate complex forms
+        - Respond to verification requests
+        - Handle interviews professionally
+        
+        Factors (HONEST capacity - fraud adds separate costs):
+        - Education: College educated navigate better
+        - Employment: Has documentation readily available
+        - Age: Older people more experienced with bureaucracy
+        - Disability: May struggle with complex processes
+        
+        This creates structural inequality:
+        - Educated, employed people withstand more scrutiny
+        - Less educated, unemployed struggle even if honest
+        
+        Returns:
+            float: Points (roughly 0-20, can go negative)
+        """
+        points = 10.0  # Base capacity
+        
+        # EDUCATION (bureaucratic literacy)
+        if self.education in ['bachelors', 'graduate']:
+            points += 5.0  # Understand complex forms, know rights
+        elif self.education in ['high_school', 'some_college']:
+            points += 2.0  # Basic literacy
+        elif self.education == 'less_than_hs':
+            points -= 3.0  # Struggle with forms, documentation
+        
+        # EMPLOYMENT (has documentation)
+        if self.employed:
+            points += 3.0  # Has pay stubs, employer verification easy
+        else:
+            points -= 2.0  # Lacks standard employment docs
+        
+        # AGE (experience with bureaucracy)
+        if self.age:
+            if self.age >= 50:
+                points += 2.0  # Decades of experience
+            elif self.age >= 35:
+                points += 1.0  # Some experience
+            elif self.age < 25:
+                points -= 1.0  # New to the system
+        
+        # DISABILITY (may face challenges)
+        if self.has_disability:
+            points -= 2.0  # Physical/cognitive challenges with process
+        
+        # RANDOM VARIATION (life circumstances)
+        # Some people are just more organized, less stressed, etc.
+        points += self.rng.uniform(-2, 2)
+        
+        # Ensure minimum 0
+        return max(0, points)
 
 
 

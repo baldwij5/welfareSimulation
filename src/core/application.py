@@ -57,6 +57,10 @@ class Application:
     approved: bool = False
     denial_reason: Optional[str] = None
     
+    # Complexity score (0.0 = simple, 1.0 = very complex)
+    # Calculated during application creation
+    complexity: Optional[float] = None
+    
     def get_income_discrepancy(self):
         """Calculate how much reported income differs from truth."""
         return self.true_income - self.reported_income

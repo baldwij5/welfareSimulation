@@ -22,6 +22,76 @@ from src.core.evaluator import Evaluator
 from src.core.reviewer import Reviewer
 
 
+def calculate_evaluator_capacity(county_population, base_units_per_staff=25.0, staff_per_capita=1/50000):
+    """
+    Calculate evaluator capacity based on county population.
+    
+    Larger counties need more staff to handle more applications.
+    
+    CALIBRATED PARAMETERS:
+    - Staff ratio: 1 per 50,000 people
+    - Units per staff: 25.0 (calibrated to keep overflow <5%)
+    
+    Args:
+        county_population: Total county population (from ACS)
+        base_units_per_staff: Complexity units one staff can handle per month (default: 25)
+        staff_per_capita: Staff ratio (default: 1 per 50,000 people)
+        
+    Returns:
+        float: Monthly capacity in complexity units
+    
+    Examples:
+        Small county (50,000 pop):  1 staff → 25 units/month
+        Medium county (500,000 pop): 10 staff → 250 units/month
+        Large county (2.5M pop): 50 staff → 1,250 units/month
+    """
+    # Calculate number of staff
+    num_staff = county_population * staff_per_capita
+    
+    # Minimum 0.5 staff (part-time) for very small counties
+    num_staff = max(0.5, num_staff)
+    
+    # Total capacity
+    capacity = num_staff * base_units_per_staff
+    
+    return capacity
+
+
+def calculate_reviewer_capacity(county_population, base_units_per_staff=15.0, staff_per_capita=1/50000):
+    """
+    Calculate reviewer capacity based on county population.
+    
+    Reviewers are specialists - same staff ratio as evaluators but handle fewer units.
+    
+    CALIBRATED PARAMETERS:
+    - Staff ratio: 1 per 50,000 (same as evaluators)
+    - Units per staff: 15.0 (fewer than evaluators' 20.0 - more specialized work)
+    
+    Args:
+        county_population: Total county population (from ACS)
+        base_units_per_staff: Complexity units one reviewer handles per month (default: 15)
+        staff_per_capita: Staff ratio (default: 1 per 50,000 people)
+        
+    Returns:
+        float: Monthly capacity in complexity units
+    
+    Examples:
+        Small county (50,000 pop): 1 staff → 15 units/month
+        Medium county (500,000 pop): 10 staff → 150 units/month
+        Large county (2.5M pop): 50 staff → 750 units/month
+    """
+    # Calculate number of staff
+    num_staff = county_population * staff_per_capita
+    
+    # Minimum 0.5 staff for very small counties
+    num_staff = max(0.5, num_staff)
+    
+    # Total capacity
+    capacity = num_staff * base_units_per_staff
+    
+    return capacity
+
+
 def create_population(n_seekers, counties=None, random_seed=42):
     """
     Create a population of seekers with diverse characteristics.
@@ -82,24 +152,40 @@ def create_population(n_seekers, counties=None, random_seed=42):
     return seekers
 
 
-def create_evaluators(counties, programs=['SNAP', 'TANF', 'SSI'], random_seed=42):
+def create_evaluators(counties, acs_data=None, random_seed=42):
     """
     Create evaluators for each county-program combination.
     
     Each county gets one evaluator per program.
+    Capacity is scaled by county population (larger counties have more staff).
     
     Args:
         counties: List of county names
+        acs_data: ACS DataFrame with county populations (optional)
         programs: List of programs (default: SNAP, TANF, SSI)
         random_seed: Random seed for reproducibility
         
     Returns:
         dict: {(county, program): Evaluator}
     """
+    programs = ['SNAP', 'TANF', 'SSI']
     evaluators = {}
     evaluator_id = 0
     
     for county in counties:
+        # Get county population if ACS data provided
+        if acs_data is not None:
+            county_data = acs_data[acs_data['county_name'] == county]
+            if len(county_data) > 0:
+                population = county_data.iloc[0]['total_county_population']
+                capacity = calculate_evaluator_capacity(population)
+            else:
+                # County not found, use default
+                capacity = 20.0
+        else:
+            # No ACS data, use default
+            capacity = 20.0
+        
         for program in programs:
             evaluator = Evaluator(
                 evaluator_id=evaluator_id,
@@ -108,64 +194,93 @@ def create_evaluators(counties, programs=['SNAP', 'TANF', 'SSI'], random_seed=42
                 strictness=0.5,  # Default strictness (can vary by county later)
                 random_state=np.random.RandomState(random_seed + evaluator_id)
             )
+            # Store capacity for later use (will add to Evaluator class in Step 3)
+            evaluator.monthly_capacity = capacity
+            
             evaluators[(county, program)] = evaluator
             evaluator_id += 1
     
     return evaluators
 
 
-def create_reviewers(counties, programs=['SNAP', 'TANF', 'SSI'], random_seed=42):
+def create_reviewers(counties, acs_data=None, random_seed=42):
     """
     Create one reviewer per county-program combination (matches evaluators).
     
     Each evaluator has their own dedicated reviewer.
+    Capacity is scaled by county population.
     
     Args:
         counties: List of county names
+        acs_data: ACS DataFrame with county populations (optional)
         programs: List of programs (default: SNAP, TANF, SSI)
         random_seed: Random seed for reproducibility
         
     Returns:
         dict: {(county, program): Reviewer}
     """
+    programs = ['SNAP', 'TANF', 'SSI']
     reviewers = {}
     reviewer_id = 0
     
     for county in counties:
+        # Get county population if ACS data provided
+        if acs_data is not None:
+            county_data = acs_data[acs_data['county_name'] == county]
+            if len(county_data) > 0:
+                population = county_data.iloc[0]['total_county_population']
+                capacity = calculate_reviewer_capacity(population)
+            else:
+                # County not found, use default
+                capacity = 10.0
+        else:
+            # No ACS data, use default
+            capacity = 10.0
+        
         for program in programs:
             reviewer = Reviewer(
                 reviewer_id=reviewer_id,
-                capacity=50,  # Can handle 50 cases per month
+                capacity=50,  # Will be replaced with complexity units in Step 4
                 accuracy=0.85,  # 85% fraud detection
                 random_state=np.random.RandomState(random_seed + reviewer_id + 1000)
             )
+            # Store capacity for later use (will update Reviewer class in Step 4)
+            reviewer.monthly_capacity = capacity
+            
             reviewers[(county, program)] = reviewer
             reviewer_id += 1
     
     return reviewers
 
 
-def run_month(seekers, evaluators, reviewers, month):
+def run_month(seekers, evaluators, reviewers, month, ai_sorter=None):
     """
     Run one month of the simulation.
     
     Steps:
-    1. Seekers create applications
-    2. Route to correct county-program evaluator
-    3. Reviewer handles escalations (same county-program)
-    4. Update seeker histories
-    5. Return monthly statistics
+    1. Reset staff capacity for new month
+    2. Seekers create applications
+    3. OPTIONAL: AI tool sorts applications
+    4. Route to correct county-program evaluator
+    5. Reviewer handles escalations (same county-program)
+    6. Handle capacity-exceeded cases
+    7. Update seeker histories
+    8. Return monthly statistics
     
     Args:
         seekers: List of Seeker objects
         evaluators: Dict of {(county, program): Evaluator}
         reviewers: Dict of {(county, program): Reviewer}
         month: Current month number
+        ai_sorter: Optional AI_ApplicationSorter for ordering applications
         
     Returns:
         dict: Monthly statistics
     """
-    # Reset reviewer capacity for new month
+    # Reset staff capacity for new month
+    for evaluator in evaluators.values():
+        evaluator.reset_monthly_capacity(month)
+    
     for reviewer in reviewers.values():
         reviewer.reset_monthly_capacity(month)
     
@@ -176,6 +291,7 @@ def run_month(seekers, evaluators, reviewers, month):
         'applications_approved': 0,
         'applications_denied': 0,
         'applications_escalated': 0,
+        'applications_capacity_exceeded': 0,  # NEW: Overflow tracking
         'fraud_attempted': 0,
         'errors_made': 0,
         'honest_applications': 0,
@@ -203,6 +319,12 @@ def run_month(seekers, evaluators, reviewers, month):
                     stats['honest_applications'] += 1
     
     stats['applications_submitted'] = len(applications)
+    
+    # NEW: AI sorting (if enabled)
+    if ai_sorter:
+        # Create seekers dict for need-based sorting
+        seekers_dict = {s.id: s for s in seekers}
+        applications = ai_sorter.sort_applications(applications, seekers_dict)
     
     # Step 2: Process applications with correct evaluator for each county-program
     for app in applications:
@@ -237,8 +359,8 @@ def run_month(seekers, evaluators, reviewers, month):
             stats['applications_escalated'] += 1
             
             # Reviewer processes escalated case
-            if reviewer.can_review():
-                final_decision = reviewer.review_application(app)
+            if reviewer.can_review(app):  # Pass application for complexity check
+                final_decision = reviewer.review_application(app, seeker=seeker)  # Pass seeker for points
                 
                 if final_decision == 'APPROVED':
                     stats['applications_approved'] += 1
@@ -252,11 +374,17 @@ def run_month(seekers, evaluators, reviewers, month):
                 # Track if investigated
                 if app.investigated:
                     seeker.num_investigations += 1
+        
+        elif decision == 'CAPACITY_EXCEEDED':
+            # NEW: Evaluator at capacity - queue for next month
+            stats['applications_capacity_exceeded'] += 1
+            # For now, just count it (could implement queue in future)
+            # Application remains pending
     
     return stats
 
 
-def run_simulation(n_seekers, n_months, counties=None, random_seed=42):
+def run_simulation(n_seekers, n_months, counties=None, ai_sorter=None, random_seed=42):
     """
     Run complete simulation.
     
@@ -264,6 +392,7 @@ def run_simulation(n_seekers, n_months, counties=None, random_seed=42):
         n_seekers: Number of seekers to simulate
         n_months: Number of months to simulate
         counties: List of county names (default: 3 counties)
+        ai_sorter: Optional AI_ApplicationSorter for ordering applications
         random_seed: Random seed for reproducibility
         
     Returns:
@@ -291,7 +420,7 @@ def run_simulation(n_seekers, n_months, counties=None, random_seed=42):
     monthly_stats = []
     
     for month in range(n_months):
-        stats = run_month(seekers, evaluators, reviewers, month)
+        stats = run_month(seekers, evaluators, reviewers, month, ai_sorter=ai_sorter)
         monthly_stats.append(stats)
     
     # Step 5: Calculate summary statistics
@@ -342,7 +471,7 @@ if __name__ == "__main__":
               f"{stats['errors_made']} errors")
 
 
-def run_simulation_with_real_data(cps_file, acs_file, n_seekers, n_months, counties, random_seed=42):
+def run_simulation_with_real_data(cps_file, acs_file, n_seekers, n_months, counties, ai_sorter=None, random_seed=42):
     """
     Run simulation using real CPS/ACS data for population characteristics.
     
@@ -354,12 +483,13 @@ def run_simulation_with_real_data(cps_file, acs_file, n_seekers, n_months, count
         n_seekers: Number of seekers to create
         n_months: Number of months to simulate
         counties: List of county names (must match ACS county_name exactly)
+        ai_sorter: Optional AI_ApplicationSorter for ordering applications
         random_seed: Random seed for reproducibility
         
     Returns:
         dict: Simulation results (same structure as run_simulation)
     """
-    from data.data_loader import create_realistic_population
+    from data.data_loader import create_realistic_population, load_acs_county_data
     
     # Step 1: Create realistic population from data
     print("Creating realistic population from CPS/ACS data...")
@@ -371,16 +501,34 @@ def run_simulation_with_real_data(cps_file, acs_file, n_seekers, n_months, count
         random_seed=random_seed
     )
     
-    # Step 2: Create evaluators and reviewers
-    evaluators = create_evaluators(counties, random_seed=random_seed)
-    reviewers = create_reviewers(counties, random_seed=random_seed)
+    # Step 2: Load ACS for population data
+    acs_data = load_acs_county_data(acs_file)
     
-    # Step 3: Run simulation month by month
-    print(f"\nRunning simulation: {n_seekers} seekers, {n_months} months, {len(counties)} counties")
+    # Step 3: Create evaluators and reviewers with population-based capacity
+    print(f"\nCreating staff with population-based capacity...")
+    evaluators = create_evaluators(counties, acs_data=acs_data, random_seed=random_seed)
+    reviewers = create_reviewers(counties, acs_data=acs_data, random_seed=random_seed)
+    
+    # Print capacity info
+    print(f"\nStaff capacity by county:")
+    for county in counties:
+        county_data = acs_data[acs_data['county_name'] == county]
+        if len(county_data) > 0:
+            pop = county_data.iloc[0]['total_county_population']
+            eval_cap = evaluators[(county, 'SNAP')].monthly_capacity
+            rev_cap = reviewers[(county, 'SNAP')].monthly_capacity
+            print(f"  {county}: Pop {pop:,}")
+            print(f"    Evaluator capacity: {eval_cap:.1f} units/month")
+            print(f"    Reviewer capacity: {rev_cap:.1f} units/month")
+    
+    # Step 4: Run simulation month by month
+    if ai_sorter:
+        print(f"\nRunning simulation with AI: {ai_sorter.name}")
+    print(f"Running simulation: {n_seekers} seekers, {n_months} months, {len(counties)} counties")
     monthly_stats = []
     
     for month in range(n_months):
-        stats = run_month(seekers, evaluators, reviewers, month)
+        stats = run_month(seekers, evaluators, reviewers, month, ai_sorter=ai_sorter)
         monthly_stats.append(stats)
         
         if (month + 1) % 12 == 0:

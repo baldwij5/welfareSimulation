@@ -38,6 +38,48 @@ class Evaluator:
         self.applications_denied = 0
         self.applications_escalated = 0
         
+        # Capacity tracking (complexity units)
+        self.monthly_capacity = 20.0  # Default, overridden by create_evaluators()
+        self.capacity_used_this_month = 0.0
+        self.current_month = 0
+    
+    def reset_monthly_capacity(self, month):
+        """
+        Reset capacity for a new month.
+        
+        Args:
+            month: The new month number
+        """
+        self.current_month = month
+        self.capacity_used_this_month = 0.0
+    
+    def can_process(self, application):
+        """
+        Check if evaluator has capacity to process this application.
+        
+        Args:
+            application: Application with complexity score
+            
+        Returns:
+            bool: True if sufficient capacity remains
+        """
+        if application.complexity is None:
+            # No complexity score - assume simple
+            return True
+        
+        remaining = self.monthly_capacity - self.capacity_used_this_month
+        return application.complexity <= remaining
+    
+    def use_capacity(self, application):
+        """
+        Deduct complexity units for processing this application.
+        
+        Args:
+            application: Application that was processed
+        """
+        if application.complexity is not None:
+            self.capacity_used_this_month += application.complexity
+    
     def process_application(self, application, reviewer=None):
         """
         Process an application and make a decision.
@@ -47,8 +89,15 @@ class Evaluator:
             reviewer: Optional Reviewer object for escalation
             
         Returns:
-            str: Decision ('APPROVED', 'DENIED', or 'ESCALATED')
+            str: Decision ('APPROVED', 'DENIED', 'ESCALATED', or 'CAPACITY_EXCEEDED')
         """
+        # NEW: Check capacity FIRST
+        if not self.can_process(application):
+            return "CAPACITY_EXCEEDED"
+        
+        # Use capacity for this application
+        self.use_capacity(application)
+        
         self.applications_processed += 1
         
         # Step 1: Check basic eligibility

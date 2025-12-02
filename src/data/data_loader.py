@@ -287,7 +287,7 @@ def cps_row_to_seeker(row, seeker_id, county='DEFAULT', random_state=None):
     Returns:
         Seeker object (with complete CPS data stored)
     """
-    from src.core.seeker import Seeker
+    from core.seeker import Seeker
     
     # Extract key characteristics
     income = row['INCTOT']

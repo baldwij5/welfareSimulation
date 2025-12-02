@@ -1,0 +1,9 @@
+pair_id,control_county,treatment_county,similarity,distance
+1,"Jefferson County, Alabama","Mobile County, Alabama",0.5351705155905147,0.868563328636642
+2,"Madison County, Alabama","Baldwin County, Alabama",0.45869591889029987,1.18009351907741
+3,"Tuscaloosa County, Alabama","Lee County, Alabama",0.5528740980864745,0.8087300589068127
+4,"Morgan County, Alabama","Limestone County, Alabama",0.5142492489795129,0.9445823245914724
+5,"Calhoun County, Alabama","Houston County, Alabama",0.7330060188600381,0.36424527803357976
+6,"Etowah County, Alabama","Colbert County, Alabama",0.5639544239409351,0.7731929346558927
+7,"Marshall County, Alabama","DeKalb County, Alabama",0.5090893283224885,0.9642918135705615
+8,"Lauderdale County, Alabama","St. Clair County, Alabama",0.6311186767159565,0.5844880478003406
