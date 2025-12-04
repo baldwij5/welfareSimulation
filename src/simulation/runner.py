@@ -342,8 +342,8 @@ def run_month(seekers, evaluators, reviewers, month, ai_sorter=None):
         evaluator = evaluators[key]
         reviewer = reviewers[key]  # Same key for reviewer
         
-        # Process application
-        decision = evaluator.process_application(app, reviewer=reviewer)
+        # Process application (pass seeker for history tracking)
+        decision = evaluator.process_application(app, reviewer=reviewer, seeker=seeker)
         
         if decision == 'APPROVED':
             stats['applications_approved'] += 1

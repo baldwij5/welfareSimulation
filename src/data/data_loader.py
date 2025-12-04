@@ -13,6 +13,81 @@ import pandas as pd
 import numpy as np
 
 
+def calculate_proportional_allocation(acs_data, counties, n_seekers):
+    """
+    Allocate seekers proportionally to county eligible populations.
+    
+    Estimates eligible population as:
+    total_pop × (poverty_rate / 100 × 2.5)
+    
+    This assumes eligible population ≈ 2.5× poverty rate
+    (e.g., 15% poverty → ~37.5% eligible, matches our CPS filter of 41.7%)
+    
+    Args:
+        acs_data: ACS DataFrame
+        counties: List of county names
+        n_seekers: Total seekers to allocate
+        
+    Returns:
+        dict: {county: n_seekers_for_county}
+    """
+    allocations = {}
+    eligible_pops = {}
+    
+    print(f"\nCalculating proportional allocation based on eligible populations:")
+    print(f"  (Eligible ≈ total_pop × poverty_rate × 2.5)")
+    
+    # Calculate eligible population for each county
+    for county in counties:
+        county_data = acs_data[acs_data['county_name'] == county]
+        if len(county_data) > 0:
+            pop = county_data.iloc[0]['total_county_population']
+            poverty = county_data.iloc[0]['poverty_rate']
+            
+            # Estimate eligible as poverty_rate × 2.5
+            # Calibrated: poverty ~15% → eligible ~37.5% (matches our 41.7% CPS filter)
+            eligible = pop * (poverty / 100 * 2.5)
+            eligible_pops[county] = eligible
+    
+    # Total eligible across all counties
+    total_eligible = sum(eligible_pops.values())
+    
+    print(f"\n  Total eligible across {len(counties)} counties: {total_eligible:,.0f}")
+    
+    # Allocate proportionally
+    for county, eligible in eligible_pops.items():
+        proportion = eligible / total_eligible
+        n_county = int(n_seekers * proportion)
+        allocations[county] = max(50, n_county)  # Minimum 50 per county for statistical power
+    
+    # Handle rounding (ensure total ≈ n_seekers)
+    allocated = sum(allocations.values())
+    if allocated < n_seekers:
+        # Add remainder to largest county
+        largest = max(allocations, key=allocations.get)
+        allocations[largest] += (n_seekers - allocated)
+    elif allocated > n_seekers:
+        # Remove from largest county
+        largest = max(allocations, key=allocations.get)
+        allocations[largest] -= (allocated - n_seekers)
+    
+    print(f"\n  Proportional allocation:")
+    print(f"  {'County':<40} | {'Eligible':>12} | {'%':>6} | {'Seekers':>8}")
+    print(f"  {'-'*40}-+-{'-'*12}-+-{'-'*6}-+-{'-'*8}")
+    
+    for county in counties:
+        if county in allocations:
+            eligible = eligible_pops[county]
+            proportion = eligible / total_eligible
+            n = allocations[county]
+            county_short = county[:37] + '...' if len(county) > 40 else county
+            print(f"  {county_short:<40} | {eligible:>12,.0f} | {proportion:>5.1%} | {n:>8}")
+    
+    print(f"\n  Total allocated: {sum(allocations.values())} seekers")
+    
+    return allocations
+
+
 def load_cps_data(filepath='src/data/cps_asec_2022_processed_full.csv'):
     """
     Load CPS ASEC data (152,733 individuals).
@@ -333,7 +408,7 @@ def cps_row_to_seeker(row, seeker_id, county='DEFAULT', random_state=None):
     return seeker
 
 
-def create_realistic_population(cps_file, acs_file, n_seekers, counties, random_seed=42):
+def create_realistic_population(cps_file, acs_file, n_seekers, counties, proportional=True, random_seed=42):
     """
     Create realistic population using CPS individuals weighted by ACS county demographics.
     
@@ -342,7 +417,8 @@ def create_realistic_population(cps_file, acs_file, n_seekers, counties, random_
     Process:
     1. Load CPS (152,733 real people)
     2. Load ACS (3,203 counties)
-    3. For each county:
+    3. Allocate seekers proportionally (or equally) across counties
+    4. For each county:
        a. Get county demographics from ACS (% Black, poverty rate, etc.)
        b. Weight CPS individuals to match those demographics
        c. Sample from CPS using weights
@@ -355,6 +431,8 @@ def create_realistic_population(cps_file, acs_file, n_seekers, counties, random_
         acs_file: Path to ACS county data
         n_seekers: Total seekers to create
         counties: List of county names (must match ACS exactly)
+        proportional: If True, allocate by eligible population (default: True)
+                     If False, allocate equally across counties
         random_seed: Random seed
         
     Returns:
@@ -370,8 +448,18 @@ def create_realistic_population(cps_file, acs_file, n_seekers, counties, random_
     cps_eligible = filter_to_eligible(cps_data)
     
     # Distribute seekers across counties
-    seekers_per_county = n_seekers // len(counties)
-    remainder = n_seekers % len(counties)
+    if proportional:
+        # PROPORTIONAL: Allocate by eligible population
+        allocations = calculate_proportional_allocation(acs_data, counties, n_seekers)
+    else:
+        # EQUAL: Same number per county (old method for comparison)
+        seekers_per_county = n_seekers // len(counties)
+        remainder = n_seekers % len(counties)
+        allocations = {}
+        for idx, county in enumerate(counties):
+            allocations[county] = seekers_per_county + (1 if idx < remainder else 0)
+        
+        print(f"\nEqual allocation: {seekers_per_county} seekers per county")
     
     all_seekers = []
     seeker_id = 0
@@ -385,8 +473,12 @@ def create_realistic_population(cps_file, acs_file, n_seekers, counties, random_
             print(f"Skipping {county_name}")
             continue
         
-        # Number for this county
-        n_county = seekers_per_county + (1 if county_idx < remainder else 0)
+        # Number for this county (from allocations dict)
+        n_county = allocations.get(county_name, 0)
+        
+        if n_county == 0:
+            print(f"Skipping {county_name} (0 seekers allocated)")
+            continue
         
         print(f"\n{'='*70}")
         print(f"County: {county_name}")

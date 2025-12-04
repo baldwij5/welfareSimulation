@@ -78,6 +78,13 @@ class Seeker:
         self.num_approvals = 0
         self.num_denials = 0
         
+        # FRAUD HISTORY TRACKING
+        self.fraud_detected_count = 0  # Number of times caught for fraud
+        self.last_fraud_detection_month = None  # When last caught
+        self.investigation_history = []  # List of months investigated
+        self.denial_history = []  # List of (month, reason) tuples
+        self.fraud_flag = False  # Permanent flag after multiple fraud detections
+        
         # Enrollment tracking: {program: month_approved}
         # Tracks when seeker was last approved for each program
         self.enrolled_programs = {}  # e.g., {'SNAP': 5, 'TANF': 3}
@@ -94,6 +101,86 @@ class Seeker:
         # Based on education, employment, age, organization
         self.bureaucracy_navigation_points = self._generate_bureaucracy_capacity()
     
+    def is_banned_for_fraud(self, month):
+        """
+        Check if seeker is currently banned due to fraud detection.
+        
+        Ban rules:
+        - First fraud detection: 6-month ban
+        - Second fraud detection: 12-month ban
+        - Third+ fraud detection: Permanent ban (fraud_flag = True)
+        
+        Args:
+            month: Current month
+            
+        Returns:
+            bool: True if currently banned
+        """
+        # Permanent fraud flag (caught 3+ times)
+        if self.fraud_flag:
+            return True
+        
+        # Check temporary ban
+        if self.last_fraud_detection_month is not None:
+            months_since_caught = month - self.last_fraud_detection_month
+            
+            # Ban length depends on number of times caught
+            if self.fraud_detected_count == 1:
+                ban_length = 6  # 6 months for first offense
+            elif self.fraud_detected_count == 2:
+                ban_length = 12  # 12 months for second offense
+            else:
+                return True  # Permanent ban (3+ offenses)
+            
+            if months_since_caught < ban_length:
+                return True  # Still banned
+        
+        return False  # Not banned
+    
+    def record_fraud_detection(self, month):
+        """
+        Record that fraud was detected.
+        
+        Called by Reviewer when fraud is caught.
+        Escalates consequences with each detection.
+        
+        Args:
+            month: Month when fraud was detected
+        """
+        self.fraud_detected_count += 1
+        self.last_fraud_detection_month = month
+        
+        # After 3 detections, permanent flag
+        if self.fraud_detected_count >= 3:
+            self.fraud_flag = True
+    
+    def record_investigation(self, month):
+        """
+        Record that application was investigated.
+        
+        Affects future suspicion scores.
+        
+        Args:
+            month: Month of investigation
+        """
+        self.investigation_history.append(month)
+        self.num_investigations += 1
+    
+    def record_denial(self, month, reason='general'):
+        """
+        Record application denial with reason.
+        
+        Args:
+            month: Month of denial
+            reason: 'fraud', 'ineligible', 'capacity', etc.
+        """
+        self.denial_history.append((month, reason))
+        self.num_denials += 1
+    
+    def has_investigation_history(self):
+        """Check if seeker has been investigated before."""
+        return len(self.investigation_history) > 0
+    
     def get_monthly_income(self):
         """Convert annual income to monthly for benefit calculations."""
         return self.income / 12
@@ -107,8 +194,9 @@ class Seeker:
         Decide whether to apply for a benefit program.
         
         Applies if:
-        1. Not currently enrolled AND meets eligibility, OR
-        2. Currently enrolled AND recertification is due
+        1. NOT banned due to fraud history, AND
+        2. Not currently enrolled AND meets eligibility, OR
+        3. Currently enrolled AND recertification is due
         
         Args:
             program: Which program ('SNAP', 'TANF', 'SSI')
@@ -117,6 +205,10 @@ class Seeker:
         Returns:
             bool: True if eligible and should apply
         """
+        # NEW: Check fraud ban first
+        if self.is_banned_for_fraud(month):
+            return False  # Can't apply while banned
+        
         monthly_income = self.get_monthly_income()
         
         # Check if recertification is needed

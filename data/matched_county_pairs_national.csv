@@ -1,0 +1,21 @@
+pair_id,control_county,treatment_county,control_state,treatment_state,cross_state,similarity,distance
+1,"Yamhill County, Oregon","Skagit County, Washington",Oregon,Washington,True,0.5936089823195086,0.6846106271716628
+2,"Kankakee County, Illinois","Morgan County, Alabama",Illinois,Alabama,True,0.60725925323884,0.6467431244010899
+3,"Carver County, Minnesota","Sussex County, New Jersey",Minnesota,New Jersey,True,0.5802087293285086,0.7235176746777443
+4,"Cass County, Missouri","Roanoke County, Virginia",Missouri,Virginia,True,0.7856100363660703,0.27289616184846005
+5,"Navajo County, Arizona","San Juan County, New Mexico",Arizona,New Mexico,True,0.6003687128343344,0.665643093356765
+6,"Houston County, Alabama","Roanoke city, Virginia",Alabama,Virginia,True,0.6846342632056919,0.46063387963911984
+7,"Platte County, Missouri","Albemarle County, Virginia",Missouri,Virginia,True,0.7245550160880162,0.38015744532299783
+8,"Matanuska-Susitna Borough, Alaska","Northeastern Connecticut Planning Region, Connecticut",Alaska,Connecticut,True,0.6535909226715508,0.5300090091712155
+9,"St. Lawrence County, New York","Oswego County, New York",New York,New York,False,0.706038137794334,0.41635408410656694
+10,"Miami County, Ohio","Franklin County, Missouri",Ohio,Missouri,True,0.869206501374961,0.15047459771428567
+11,"Bradley County, Tennessee","Jefferson County, New York",Tennessee,New York,True,0.7085312482816966,0.41137035582433723
+12,"Terrebonne Parish, Louisiana","Carroll County, Georgia",Louisiana,Georgia,True,0.7567016292239912,0.3215248406766546
+13,"Vigo County, Indiana","Delaware County, Indiana",Indiana,Indiana,False,0.8001162181648336,0.24981843549381477
+14,"Eaton County, Michigan","Ontario County, New York",Michigan,New York,True,0.6751820926582417,0.4810819345977116
+15,"Madison County, Mississippi","Houston County, Georgia",Mississippi,Georgia,True,0.49637410612613375,1.0146095206382293
+16,"Monongalia County, West Virginia","Monroe County, Indiana",West Virginia,Indiana,True,0.648029235662662,0.5431402550494802
+17,"Flathead County, Montana","Wayne County, Ohio",Montana,Ohio,True,0.7843458112733037,0.27494784268255895
+18,"Bartow County, Georgia","Moore County, North Carolina",Georgia,North Carolina,True,0.7169522958906044,0.39479293912824603
+19,"LaSalle County, Illinois","Bannock County, Idaho",Illinois,Idaho,True,0.631277011851149,0.5840906309380918
+20,"Eau Claire County, Wisconsin","Pennington County, South Dakota",Wisconsin,South Dakota,True,0.8138455776857573,0.22873432923674475

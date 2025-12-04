@@ -80,13 +80,14 @@ class Evaluator:
         if application.complexity is not None:
             self.capacity_used_this_month += application.complexity
     
-    def process_application(self, application, reviewer=None):
+    def process_application(self, application, reviewer=None, seeker=None):
         """
         Process an application and make a decision.
         
         Args:
             application: Application object to process
             reviewer: Optional Reviewer object for escalation
+            seeker: Optional Seeker object for history tracking
             
         Returns:
             str: Decision ('APPROVED', 'DENIED', 'ESCALATED', or 'CAPACITY_EXCEEDED')
@@ -107,10 +108,15 @@ class Evaluator:
             application.approved = False
             application.denial_reason = "Income too high"
             self.applications_denied += 1
+            
+            # Record denial in seeker history
+            if seeker:
+                seeker.record_denial(self.current_month, 'ineligible')
+            
             return "DENIED"
         
-        # Step 2: Calculate suspicion score
-        suspicion = self._calculate_suspicion(application)
+        # Step 2: Calculate suspicion score (history-aware)
+        suspicion = self._calculate_suspicion(application, seeker)
         application.suspicion_score = suspicion
         
         # Step 3: Decide whether to escalate
@@ -164,7 +170,7 @@ class Evaluator:
         
         return False
     
-    def _calculate_suspicion(self, application):
+    def _calculate_suspicion(self, application, seeker=None):
         """
         Calculate suspicion score based on red flags.
         
@@ -172,6 +178,12 @@ class Evaluator:
         - Very low reported income
         - Large household size
         - Multiple benefit applications (tracked elsewhere)
+        - NEW: Past investigation history
+        - NEW: Past denials
+        
+        Args:
+            application: Application object
+            seeker: Optional Seeker for history
         
         Returns:
             float: Suspicion score (0.0 = not suspicious, 1.0 = very suspicious)
@@ -193,6 +205,14 @@ class Evaluator:
         # Red flag 3: SSI without clear disability documentation
         if application.program == 'SSI':
             score += 0.3  # Always somewhat suspicious
+        
+        # RED FLAG 4: Past investigation history (NEW!)
+        if seeker and seeker.has_investigation_history():
+            score += 0.2  # +20% for prior investigations
+        
+        # RED FLAG 5: Multiple past denials (NEW!)
+        if seeker and len(seeker.denial_history) > 0:
+            score += 0.1 * min(len(seeker.denial_history), 3)  # Up to +30%
         
         # Add random noise (evaluator judgment varies)
         noise = self.rng.normal(0, 0.1)

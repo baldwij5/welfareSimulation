@@ -140,8 +140,12 @@ class Reviewer:
         self.applications_reviewed += 1
         self.reviewed_this_month += 1
         
-        # NEW: Bureaucracy points investigation
+        # NEW: Bureaucracy points investigation (with history recording)
         if seeker is not None:
+            # Record that investigation occurred
+            seeker.record_investigation(self.current_month)
+            
+            # Conduct investigation
             fraud_detected = self._conduct_points_investigation(application, seeker)
         else:
             # Fallback to old probabilistic method if no seeker provided
@@ -161,6 +165,15 @@ class Reviewer:
             # Track fraud detection
             if application.is_fraud or application.is_error:
                 self.fraud_detected += 1
+            
+            # NEW: Record fraud detection in seeker history
+            if seeker and application.is_fraud:
+                seeker.record_fraud_detection(self.current_month)
+            
+            # NEW: Record denial
+            if seeker:
+                reason = 'fraud' if application.is_fraud else 'verification_failed'
+                seeker.record_denial(self.current_month, reason)
             
             return "DENIED"
         

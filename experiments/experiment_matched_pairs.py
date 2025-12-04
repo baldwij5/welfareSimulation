@@ -270,7 +270,14 @@ def main():
     # Run each pair
     pair_results = []
     
-    for i, (county_control, county_treatment) in enumerate(matched_pairs[:3], 1):  # Start with 3 pairs
+    print(f"\nRunning {len(matched_pairs)} matched pairs...")
+    print(f"This will take approximately {len(matched_pairs) * 2} minutes.\n")
+    
+    for i, (county_control, county_treatment) in enumerate(matched_pairs, 1):
+        print(f"\n{'='*70}")
+        print(f"Progress: Pair {i} of {len(matched_pairs)} ({i/len(matched_pairs)*100:.0f}% complete)")
+        print(f"{'='*70}")
+        
         result = run_matched_pair(
             pair_id=i,
             county_control=county_control,
@@ -280,6 +287,29 @@ def main():
             random_seed=42
         )
         pair_results.append(result)
+    
+    # Save individual pair results
+    import os
+    os.makedirs('results', exist_ok=True)
+    
+    results_data = []
+    for p in pair_results:
+        if p['treatment_effect'] is not None:
+            results_data.append({
+                'pair_id': p['pair_id'],
+                'control_county': p['control_county'],
+                'treatment_county': p['treatment_county'],
+                'control_gap': p['control_gap'],
+                'treatment_gap': p['treatment_gap'],
+                'treatment_effect': p['treatment_effect'],
+                'control_approval_rate': p['control_approval_rate'],
+                'treatment_approval_rate': p['treatment_approval_rate']
+            })
+    
+    import pandas as pd
+    results_df = pd.DataFrame(results_data)
+    results_df.to_csv('results/matched_pairs_results.csv', index=False)
+    print(f"\n✓ Detailed results saved to: results/matched_pairs_results.csv")
     
     # Aggregate
     aggregate = aggregate_results(pair_results)
