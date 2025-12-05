@@ -85,6 +85,28 @@ class Seeker:
         self.denial_history = []  # List of (month, reason) tuples
         self.fraud_flag = False  # Permanent flag after multiple fraud detections
         
+        # LEARNING SYSTEM - Beliefs about approval probability
+        # Seekers start optimistic, learn from experience
+        self.perceived_approval_probability = {
+            'SNAP': 0.70,   # Initial belief: "I think I have 70% chance"
+            'TANF': 0.60,
+            'SSI': 0.55
+        }
+        
+        # Application threshold - minimum probability to apply
+        # Accounts for application costs (time, paperwork, stigma)
+        self.application_threshold = 0.25  # "Need at least 25% chance"
+        
+        # Learning rate - how fast beliefs update from experience
+        self.learning_rate = 0.30  # 30% weight on new evidence
+        
+        # Track outcomes for learning
+        self.application_outcomes = {
+            'SNAP': [],  # ['APPROVED', 'DENIED', ...]
+            'TANF': [],
+            'SSI': []
+        }
+        
         # Enrollment tracking: {program: month_approved}
         # Tracks when seeker was last approved for each program
         self.enrolled_programs = {}  # e.g., {'SNAP': 5, 'TANF': 3}
@@ -181,6 +203,70 @@ class Seeker:
         """Check if seeker has been investigated before."""
         return len(self.investigation_history) > 0
     
+    def update_beliefs(self, program, outcome):
+        """
+        Update beliefs about approval probability based on experience.
+        
+        Uses exponential smoothing (Bayesian-style learning):
+        new_belief = (1 - α) × old_belief + α × new_evidence
+        
+        Where α = learning_rate (how much to weight new info)
+        
+        Args:
+            program: 'SNAP', 'TANF', or 'SSI'
+            outcome: 'APPROVED', 'DENIED', 'CAPACITY_EXCEEDED'
+        """
+        # Record outcome
+        self.application_outcomes[program].append(outcome)
+        
+        # Current belief
+        current_belief = self.perceived_approval_probability[program]
+        
+        # Interpret outcome as evidence
+        if outcome == 'APPROVED':
+            new_evidence = 1.0  # Strong positive signal
+        elif outcome == 'DENIED':
+            new_evidence = 0.0  # Strong negative signal
+        elif outcome == 'CAPACITY_EXCEEDED':
+            # Treat as partial evidence (not about my eligibility)
+            new_evidence = current_belief  # No update (uninformative)
+            return  # Early return, don't update
+        else:
+            new_evidence = 0.0  # Conservative default
+        
+        # Bayesian update (exponential smoothing)
+        updated_belief = (1 - self.learning_rate) * current_belief + \
+                         self.learning_rate * new_evidence
+        
+        self.perceived_approval_probability[program] = updated_belief
+    
+    def get_expected_approval_probability(self, program):
+        """
+        Get current belief about approval probability for a program.
+        
+        Returns:
+            float: Perceived probability (0.0-1.0)
+        """
+        return self.perceived_approval_probability.get(program, 0.5)
+    
+    def has_applied_before(self, program):
+        """Check if seeker has applied for this program before."""
+        return len(self.application_outcomes.get(program, [])) > 0
+    
+    def get_success_rate(self, program):
+        """
+        Calculate actual success rate from history.
+        
+        Returns:
+            float: Approval rate from past applications (or None if never applied)
+        """
+        outcomes = self.application_outcomes.get(program, [])
+        if not outcomes:
+            return None
+        
+        approvals = sum(1 for o in outcomes if o == 'APPROVED')
+        return approvals / len(outcomes)
+    
     def get_monthly_income(self):
         """Convert annual income to monthly for benefit calculations."""
         return self.income / 12
@@ -193,25 +279,40 @@ class Seeker:
         """
         Decide whether to apply for a benefit program.
         
-        Applies if:
-        1. NOT banned due to fraud history, AND
-        2. Not currently enrolled AND meets eligibility, OR
-        3. Currently enrolled AND recertification is due
+        LEARNING-BASED DECISION:
+        1. Check if banned (fraud history)
+        2. Check eligibility  
+        3. Check if already enrolled (or recert needed)
+        4. Get belief about approval probability
+        5. Apply only if probability > threshold (learned behavior)
         
         Args:
             program: Which program ('SNAP', 'TANF', 'SSI')
             month: Current month
             
         Returns:
-            bool: True if eligible and should apply
+            bool: True if should apply this month
         """
-        # NEW: Check fraud ban first
+        # CHECK 1: Fraud ban (can't apply if banned)
         if self.is_banned_for_fraud(month):
-            return False  # Can't apply while banned
+            return False
         
+        # CHECK 2: Basic eligibility
         monthly_income = self.get_monthly_income()
         
-        # Check if recertification is needed
+        if program == 'SNAP':
+            eligible = monthly_income < 2500
+        elif program == 'TANF':
+            eligible = monthly_income < 1000 and self.has_children
+        elif program == 'SSI':
+            eligible = monthly_income < 1913 and self.has_disability
+        else:
+            return False
+        
+        if not eligible:
+            return False
+        
+        # CHECK 3: Enrollment status and recertification
         if program in self.enrolled_programs:
             months_since_approval = month - self.enrolled_programs[program]
             recert_period = self.recert_schedules[program]
@@ -220,30 +321,21 @@ class Seeker:
             if months_since_approval >= recert_period:
                 # Remove from enrollment (expired)
                 del self.enrolled_programs[program]
-                # Fall through to regular eligibility check below
+                # Fall through to learning-based decision
             else:
-                # Still enrolled, don't need to apply yet
+                # Still enrolled, don't apply yet
                 return False
         
-        # Regular eligibility check (for new applications)
-        if program == 'SNAP':
-            # SNAP: Income < $2,500/month
-            income_eligible = monthly_income < 2500
-            return income_eligible
-            
-        elif program == 'TANF':
-            # TANF: Income < $1,000/month AND has children
-            income_eligible = monthly_income < 1000
-            has_children = self.has_children
-            return income_eligible and has_children
-            
-        elif program == 'SSI':
-            # SSI: Income < $1,913/month AND has disability
-            income_eligible = monthly_income < 1913
-            has_disability = self.has_disability
-            return income_eligible and has_disability
+        # CHECK 4: LEARNING-BASED DECISION
+        # Get current belief about approval probability
+        perceived_prob = self.perceived_approval_probability[program]
         
-        return False
+        # Apply only if expected probability exceeds threshold
+        # (Accounts for application costs: time, paperwork, stigma)
+        if perceived_prob > self.application_threshold:
+            return True  # Worth trying
+        else:
+            return False  # Learned it's not worth the effort
     
     def enroll_in_program(self, program, month):
         """
