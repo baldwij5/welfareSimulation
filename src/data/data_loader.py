@@ -67,9 +67,10 @@ def calculate_proportional_allocation(acs_data, counties, n_seekers):
         largest = max(allocations, key=allocations.get)
         allocations[largest] += (n_seekers - allocated)
     elif allocated > n_seekers:
-        # Remove from largest county
+        # Remove from largest county (ensure stays positive!)
         largest = max(allocations, key=allocations.get)
-        allocations[largest] -= (allocated - n_seekers)
+        excess = allocated - n_seekers
+        allocations[largest] = max(50, allocations[largest] - excess)  # Can't go below 50
     
     print(f"\n  Proportional allocation:")
     print(f"  {'County':<40} | {'Eligible':>12} | {'%':>6} | {'Seekers':>8}")
