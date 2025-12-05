@@ -203,17 +203,17 @@ def create_evaluators(counties, acs_data=None, random_seed=42):
     return evaluators
 
 
-def create_reviewers(counties, acs_data=None, random_seed=42):
+def create_reviewers(counties, acs_data=None, load_state_models=True, random_seed=42):
     """
-    Create one reviewer per county-program combination (matches evaluators).
+    Create one reviewer per county-program combination.
     
-    Each evaluator has their own dedicated reviewer.
-    Capacity is scaled by county population.
+    NEW: Each reviewer gets their STATE's statistical discrimination model.
+    All reviewers in Alabama use Alabama model, etc.
     
     Args:
         counties: List of county names
-        acs_data: ACS DataFrame with county populations (optional)
-        programs: List of programs (default: SNAP, TANF, SSI)
+        acs_data: ACS DataFrame with county data
+        load_state_models: If True, load state-specific models (default: True)
         random_seed: Random seed for reproducibility
         
     Returns:
@@ -223,7 +223,40 @@ def create_reviewers(counties, acs_data=None, random_seed=42):
     reviewers = {}
     reviewer_id = 0
     
+    # Load state models if available
+    state_models = {}
+    if load_state_models:
+        try:
+            import pickle
+            # Load index
+            with open('models/state_models/index.pkl', 'rb') as f:
+                index = pickle.load(f)
+            
+            print(f"  ✓ Loading {index['n_states']} state-specific models...")
+            
+            # Load each state model
+            for state in index['states']:
+                filename = f"models/state_models/{state.replace(' ', '_')}.pkl"
+                try:
+                    with open(filename, 'rb') as f:
+                        state_models[state] = pickle.load(f)
+                except FileNotFoundError:
+                    continue
+            
+            print(f"  ✓ Loaded {len(state_models)} state models (statistical discrimination enabled)")
+            
+        except FileNotFoundError:
+            print("  ⚠️  No state models found (run: python scripts/train_state_models.py)")
+        except Exception as e:
+            print(f"  ⚠️  Error loading state models: {e}")
+    
     for county in counties:
+        # Extract state from county name
+        state = county.split(', ')[1] if ', ' in county else None
+        
+        # Get state model (if available)
+        state_model = state_models.get(state, None)
+        
         # Get county population if ACS data provided
         if acs_data is not None:
             county_data = acs_data[acs_data['county_name'] == county]
@@ -231,20 +264,21 @@ def create_reviewers(counties, acs_data=None, random_seed=42):
                 population = county_data.iloc[0]['total_county_population']
                 capacity = calculate_reviewer_capacity(population)
             else:
-                # County not found, use default
                 capacity = 10.0
         else:
-            # No ACS data, use default
             capacity = 10.0
         
         for program in programs:
             reviewer = Reviewer(
                 reviewer_id=reviewer_id,
-                capacity=50,  # Will be replaced with complexity units in Step 4
-                accuracy=0.85,  # 85% fraud detection
+                county=county,
+                state=state,
+                capacity=50,
+                accuracy=0.85,
+                state_model=state_model,  # STATE-SPECIFIC model!
+                acs_data=acs_data,
                 random_state=np.random.RandomState(random_seed + reviewer_id + 1000)
             )
-            # Store capacity for later use (will update Reviewer class in Step 4)
             reviewer.monthly_capacity = capacity
             
             reviewers[(county, program)] = reviewer
@@ -350,10 +384,14 @@ def run_month(seekers, evaluators, reviewers, month, ai_sorter=None):
             seeker.num_approvals += 1
             # Enroll seeker in program
             seeker.enroll_in_program(app.program, month)
+            # NEW: Update beliefs (positive evidence)
+            seeker.update_beliefs(app.program, 'APPROVED')
             
         elif decision == 'DENIED':
             stats['applications_denied'] += 1
             seeker.num_denials += 1
+            # NEW: Update beliefs (negative evidence)
+            seeker.update_beliefs(app.program, 'DENIED')
             
         elif decision == 'ESCALATED':
             stats['applications_escalated'] += 1
@@ -367,17 +405,28 @@ def run_month(seekers, evaluators, reviewers, month, ai_sorter=None):
                     seeker.num_approvals += 1
                     # Enroll seeker in program
                     seeker.enroll_in_program(app.program, month)
+                    # NEW: Update beliefs (positive)
+                    seeker.update_beliefs(app.program, 'APPROVED')
                 elif final_decision == 'DENIED':
                     stats['applications_denied'] += 1
                     seeker.num_denials += 1
+                    # NEW: Update beliefs (negative)
+                    seeker.update_beliefs(app.program, 'DENIED')
                     
                 # Track if investigated
                 if app.investigated:
                     seeker.num_investigations += 1
+            else:
+                # Reviewer at capacity - treat as capacity exceeded
+                stats['applications_capacity_exceeded'] += 1
+                # NEW: Update beliefs (treat as uninformative)
+                seeker.update_beliefs(app.program, 'CAPACITY_EXCEEDED')
         
         elif decision == 'CAPACITY_EXCEEDED':
             # NEW: Evaluator at capacity - queue for next month
             stats['applications_capacity_exceeded'] += 1
+            # NEW: Update beliefs (uninformative about eligibility)
+            seeker.update_beliefs(app.program, 'CAPACITY_EXCEEDED')
             # For now, just count it (could implement queue in future)
             # Application remains pending
     

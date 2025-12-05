@@ -50,14 +50,27 @@ def determine_iterations(population):
         return 25   # Small counties
 
 
-def run_monte_carlo_for_county(county, county_pop, n_seekers, n_iterations, n_months, 
+def run_monte_carlo_for_county(county, county_pop, poverty_rate, n_iterations, n_months, 
                                 cps_file, acs_file, base_seed):
     """
     Run Monte Carlo for one county.
     
+    Args:
+        county: County name
+        county_pop: County total population
+        poverty_rate: County poverty rate (for calculating eligible pop)
+        n_iterations: Number of Monte Carlo iterations
+        
     Returns:
         dict: County results with mean effect and CI
     """
+    # Calculate seekers proportional to eligible population
+    eligible_pop = county_pop * (poverty_rate / 100 * 2.5)
+    n_seekers = max(50, int(eligible_pop * 0.0005))  # 0.05% of eligible (1 per 2,000)
+    # This gives: LA ~1,700, rural ~50
+    
+    print(f" (n={n_seekers})", end='', flush=True)
+    
     results = []
     
     for i in range(n_iterations):
@@ -226,19 +239,22 @@ def main():
     # Run Monte Carlo for each county
     county_results = []
     
-    for i, (county, pop) in enumerate(zip(counties, counties_df['total_county_population']), 1):
+    for i, row in enumerate(counties_df.itertuples(), 1):
+        county = row.county_name
+        pop = row.total_county_population
+        poverty = row.poverty_rate
+        
         n_iters = determine_iterations(pop)
-        n_seekers = 100  # Fixed per county for comparability
         
         if i % 50 == 0:
             print(f"\nProgress: {i}/{len(counties)} counties ({i/len(counties)*100:.0f}%)")
         
-        print(f"\n{county}: {n_iters} iterations", end='', flush=True)
+        print(f"\n{i}. {county[:40]}: {n_iters} iters", end='', flush=True)
         
         result = run_monte_carlo_for_county(
             county=county,
             county_pop=pop,
-            n_seekers=n_seekers,
+            poverty_rate=poverty,
             n_iterations=n_iters,
             n_months=12,
             cps_file='src/data/cps_asec_2022_processed_full.csv',
@@ -247,7 +263,6 @@ def main():
         )
         
         county_results.append(result)
-        print(f" → Effect: {result.get('mean_effect', 0)*100:+.1f}pp", flush=True)
         
         # Checkpoint every 100
         if i % 100 == 0:
@@ -255,7 +270,7 @@ def main():
             os.makedirs('results', exist_ok=True)
             temp_df = pd.DataFrame([r for r in county_results if not r.get('skipped')])
             temp_df.to_csv(f'results/monte_carlo_all_checkpoint_{i}.csv', index=False)
-            print(f"  ✓ Checkpoint saved")
+            print(f"\n  ✓ Checkpoint {i}")
     
     # Save final
     import os

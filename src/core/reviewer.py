@@ -18,55 +18,77 @@ class Reviewer:
     INVESTIGATION_ACTIONS = {
         'basic_income_check': {
             'cost': 2,
-            'description': 'Verify reported income against records'
+            'description': 'Verify reported income against records',
+            'has_contact': False  # Database check, no seeker interaction
         },
         'request_pay_stubs': {
             'cost': 3,
-            'description': 'Request 3 months of pay stubs'
+            'description': 'Request 3 months of pay stubs',
+            'has_contact': False  # Paperwork request, minimal contact
         },
         'bank_statements': {
             'cost': 4,
-            'description': 'Request bank account statements'
+            'description': 'Request bank account statements',
+            'has_contact': False  # Document request
         },
         'employer_verification': {
             'cost': 3,
-            'description': 'Contact employer directly'
+            'description': 'Contact employer directly',
+            'has_contact': False  # Contact employer, not seeker
         },
         'interview': {
             'cost': 4,
-            'description': 'Conduct phone or in-person interview'
+            'description': 'Conduct phone or in-person interview',
+            'has_contact': True  # DIRECT CONTACT - reviewer "hears" seeker
         },
         'medical_verification': {
             'cost': 6,
-            'description': 'Verify disability documentation'
+            'description': 'Verify disability documentation',
+            'has_contact': False  # Medical records review
         },
         'household_verification': {
             'cost': 3,
-            'description': 'Verify household composition'
+            'description': 'Verify household composition',
+            'has_contact': True  # Often involves phone call/interview
         },
         'home_visit': {
             'cost': 5,
-            'description': 'Physical home visit'
+            'description': 'Physical home visit',
+            'has_contact': True  # IN-PERSON - reviewer "sees" seeker
         }
     }
     
     # Fraud penalty multiplier
     FRAUD_COST_MULTIPLIER = 2.0  # Fraudsters pay double (maintaining lies is hard)
     
-    def __init__(self, reviewer_id, capacity=50, accuracy=0.85, random_state=None):
+    def __init__(self, reviewer_id, county=None, state=None, capacity=50, accuracy=0.85, 
+                 state_model=None, acs_data=None, random_state=None):
         """
         Initialize a reviewer.
         
         Args:
             reviewer_id: Unique identifier
-            capacity: Maximum applications that can be reviewed per month (legacy, unused)
+            county: County this reviewer works in
+            state: State this reviewer works in (for state-specific model)
+            capacity: Maximum applications that can be reviewed per month (legacy)
             accuracy: Probability of detecting fraud (0.0-1.0)
+            state_model: State-specific trained model (not national!)
+            acs_data: ACS data for county lookups
             random_state: numpy RandomState for reproducibility
         """
         self.id = reviewer_id
+        self.county = county
+        self.state = state
         self.capacity = capacity  # Legacy - kept for compatibility
         self.accuracy = accuracy
         self.rng = random_state if random_state else np.random.RandomState()
+        
+        # STATE-SPECIFIC statistical discrimination model
+        self.state_model = state_model  # One model per state (not national!)
+        self.acs_data = acs_data
+        
+        # COUNTY-SPECIFIC PATTERN LEARNING (removed - too granular)
+        # Now using state-level patterns instead
         
         # Performance tracking
         self.applications_reviewed = 0
@@ -188,24 +210,47 @@ class Reviewer:
         """
         Conduct investigation using bureaucracy navigation points.
         
+        NOW with CONTACT-BASED statistical discrimination:
+        - Database checks: No bias (reviewer doesn't "see" seeker)
+        - Interview/home visit: Statistical discrimination applied
+        - Once assessed during contact, affects rest of investigation
+        
         Returns:
             bool: True if fraud detected (points exhausted)
         """
         # Start with seeker's capacity
         remaining_points = seeker.bureaucracy_navigation_points
         
+        # Track whether credibility has been assessed (during contact)
+        credibility_assessed = False
+        credibility_multiplier = 1.0
+        
         # Select investigation actions
         actions = self._select_investigation_actions(application)
         
         # Perform each action
         for action_name in actions:
-            base_cost = self.INVESTIGATION_ACTIONS[action_name]['cost']
+            action_info = self.INVESTIGATION_ACTIONS[action_name]
+            base_cost = action_info['cost']
+            has_contact = action_info['has_contact']
             
             # FRAUD PENALTY: Fraudsters pay double
             if application.is_fraud:
                 actual_cost = base_cost * self.FRAUD_COST_MULTIPLIER
             else:
                 actual_cost = base_cost
+            
+            # STATISTICAL DISCRIMINATION: Only during direct contact!
+            if has_contact and not credibility_assessed:
+                # First time reviewer "meets" seeker (phone call, home visit)
+                # Forms impression based on STATE patterns
+                credibility_multiplier = self._calculate_credibility_from_state_patterns(seeker)
+                credibility_assessed = True
+            
+            # Once credibility assessed, affects THIS and SUBSEQUENT actions
+            # (Reviewer's first impression colors rest of investigation)
+            if credibility_assessed:
+                actual_cost *= credibility_multiplier
             
             # Deduct points
             remaining_points -= actual_cost
@@ -268,6 +313,58 @@ class Reviewer:
                 unique_actions.append(action)
         
         return unique_actions
+    
+    def _calculate_credibility_from_state_patterns(self, seeker):
+        """
+        Calculate credibility using STATE-specific patterns.
+        
+        All reviewers in Alabama: Use Alabama model
+        All reviewers in California: Use California model
+        
+        Each state model captures:
+        - State welfare policies (generous vs restrictive)
+        - State demographic patterns
+        - State economic conditions
+        
+        Returns:
+            float: Investigation multiplier (0.8-1.3)
+        """
+        if self.state_model is None or self.acs_data is None:
+            return 1.0  # No model, neutral
+        
+        # Get county data
+        county_data = self.acs_data[self.acs_data['county_name'] == seeker.county]
+        if len(county_data) == 0:
+            return 1.0
+        
+        county_data = county_data.iloc[0]
+        
+        # Extract features for state model
+        features = []
+        for feat in self.state_model['features']:
+            if feat in county_data:
+                features.append(county_data[feat])
+            elif feat in self.acs_data.columns:
+                features.append(self.acs_data[feat].median())
+            else:
+                features.append(0.0)
+        
+        # Predict using STATE model
+        try:
+            features_scaled = self.state_model['scaler'].transform([features])
+            prob_high_need = self.state_model['model'].predict_proba(features_scaled)[0][1]
+        except Exception:
+            return 1.0
+        
+        # Convert to credibility multiplier
+        if prob_high_need > 0.7:
+            # County patterns (in this STATE) suggest high need
+            return 0.8  # Easier investigation
+        elif prob_high_need < 0.3:
+            # County patterns (in this STATE) suggest low need
+            return 1.3  # Harder investigation
+        else:
+            return 1.0  # Medium
     
     def _probabilistic_detection(self, application):
         """
