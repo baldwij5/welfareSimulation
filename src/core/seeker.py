@@ -10,7 +10,7 @@ import numpy as np
 class Seeker:
     """A person who may seek welfare benefits."""
     
-    def __init__(self, seeker_id, race, income, county='DEFAULT', has_children=False, has_disability=False, cps_data=None, random_state=None):
+    def __init__(self, seeker_id, race, income, county='DEFAULT', has_children=False, has_disability=False, cps_data=None, random_state=None, mechanism_config=None):
         """
         Initialize a seeker with basic characteristics.
         
@@ -28,6 +28,16 @@ class Seeker:
         self.race = race
         self.county = county
         self.rng = random_state if random_state else np.random.RandomState()
+        
+        # === MECHANISM CONTROLS ===
+        # Import here to avoid circular dependency
+        from core.mechanism_config import MechanismConfig
+        
+        # Default to full model if not specified (backward compatible)
+        if mechanism_config is None:
+            mechanism_config = MechanismConfig.full_model()
+        self.mechanism_config = mechanism_config
+        # === END MECHANISM CONTROLS ===
         
         # Basic characteristics (provided)
         self.income = income
@@ -78,12 +88,20 @@ class Seeker:
         self.num_approvals = 0
         self.num_denials = 0
         
-        # FRAUD HISTORY TRACKING
-        self.fraud_detected_count = 0  # Number of times caught for fraud
-        self.last_fraud_detection_month = None  # When last caught
-        self.investigation_history = []  # List of months investigated
-        self.denial_history = []  # List of (month, reason) tuples
-        self.fraud_flag = False  # Permanent flag after multiple fraud detections
+        # FRAUD HISTORY TRACKING (only if mechanism enabled)
+        if self.mechanism_config.fraud_history_enabled:
+            self.fraud_detected_count = 0  # Number of times caught for fraud
+            self.last_fraud_detection_month = None  # When last caught
+            self.investigation_history = []  # List of months investigated
+            self.denial_history = []  # List of (month, reason) tuples
+            self.fraud_flag = False  # Permanent flag after multiple fraud detections
+        else:
+            # No tracking when disabled
+            self.fraud_detected_count = 0  # Keep at 0
+            self.last_fraud_detection_month = None
+            self.investigation_history = None  # None = disabled
+            self.denial_history = None
+            self.fraud_flag = False  # Never flagged
         
         # LEARNING SYSTEM - Beliefs about approval probability
         # Seekers start optimistic, learn from experience
@@ -118,10 +136,14 @@ class Seeker:
             'SSI': 36    # Every 36 months
         }
         
-        # Bureaucracy navigation capacity (ability to withstand investigation)
+        # Bureaucracy navigation capacity (only if mechanism enabled)
         # Higher = better able to navigate bureaucratic requirements
         # Based on education, employment, age, organization
-        self.bureaucracy_navigation_points = self._generate_bureaucracy_capacity()
+        if self.mechanism_config.bureaucracy_points_enabled:
+            self.bureaucracy_navigation_points = self._generate_bureaucracy_capacity()
+        else:
+            # Unlimited capacity when mechanism disabled
+            self.bureaucracy_navigation_points = None
     
     def is_banned_for_fraud(self, month):
         """
@@ -138,6 +160,10 @@ class Seeker:
         Returns:
             bool: True if currently banned
         """
+        # If fraud mechanism disabled, never banned
+        if not self.mechanism_config.fraud_history_enabled:
+            return False
+        
         # Permanent fraud flag (caught 3+ times)
         if self.fraud_flag:
             return True
@@ -169,6 +195,10 @@ class Seeker:
         Args:
             month: Month when fraud was detected
         """
+        # If fraud mechanism disabled, don't record
+        if not self.mechanism_config.fraud_history_enabled:
+            return
+        
         self.fraud_detected_count += 1
         self.last_fraud_detection_month = month
         
@@ -185,7 +215,9 @@ class Seeker:
         Args:
             month: Month of investigation
         """
-        self.investigation_history.append(month)
+        # If fraud mechanism disabled, don't record
+        if self.investigation_history is not None:
+            self.investigation_history.append(month)
         self.num_investigations += 1
     
     def record_denial(self, month, reason='general'):
@@ -196,11 +228,16 @@ class Seeker:
             month: Month of denial
             reason: 'fraud', 'ineligible', 'capacity', etc.
         """
-        self.denial_history.append((month, reason))
+        # If fraud mechanism disabled, don't record in history
+        if self.denial_history is not None:
+            self.denial_history.append((month, reason))
         self.num_denials += 1
     
     def has_investigation_history(self):
         """Check if seeker has been investigated before."""
+        # If fraud mechanism disabled, investigation_history is None
+        if self.investigation_history is None:
+            return False
         return len(self.investigation_history) > 0
     
     def update_beliefs(self, program, outcome):
@@ -216,6 +253,10 @@ class Seeker:
             program: 'SNAP', 'TANF', or 'SSI'
             outcome: 'APPROVED', 'DENIED', 'CAPACITY_EXCEEDED'
         """
+        # If learning mechanism disabled, don't update beliefs
+        if not self.mechanism_config.learning_enabled:
+            return
+        
         # Record outcome
         self.application_outcomes[program].append(outcome)
         

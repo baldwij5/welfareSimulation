@@ -152,7 +152,7 @@ def create_population(n_seekers, counties=None, random_seed=42):
     return seekers
 
 
-def create_evaluators(counties, acs_data=None, random_seed=42):
+def create_evaluators(counties, acs_data=None, mechanism_config=None, random_seed=42):
     """
     Create evaluators for each county-program combination.
     
@@ -162,12 +162,18 @@ def create_evaluators(counties, acs_data=None, random_seed=42):
     Args:
         counties: List of county names
         acs_data: ACS DataFrame with county populations (optional)
+        mechanism_config: MechanismConfig object for ablation studies
         programs: List of programs (default: SNAP, TANF, SSI)
         random_seed: Random seed for reproducibility
         
     Returns:
         dict: {(county, program): Evaluator}
     """
+    from core.mechanism_config import MechanismConfig
+    
+    if mechanism_config is None:
+        mechanism_config = MechanismConfig.full_model()
+    
     programs = ['SNAP', 'TANF', 'SSI']
     evaluators = {}
     evaluator_id = 0
@@ -203,7 +209,7 @@ def create_evaluators(counties, acs_data=None, random_seed=42):
     return evaluators
 
 
-def create_reviewers(counties, acs_data=None, load_state_models=True, random_seed=42):
+def create_reviewers(counties, acs_data=None, mechanism_config=None, load_state_models=True, random_seed=42):
     """
     Create one reviewer per county-program combination.
     
@@ -213,12 +219,22 @@ def create_reviewers(counties, acs_data=None, load_state_models=True, random_see
     Args:
         counties: List of county names
         acs_data: ACS DataFrame with county data
+        mechanism_config: MechanismConfig object for ablation studies
         load_state_models: If True, load state-specific models (default: True)
         random_seed: Random seed for reproducibility
         
     Returns:
         dict: {(county, program): Reviewer}
     """
+    from core.mechanism_config import MechanismConfig
+    
+    if mechanism_config is None:
+        mechanism_config = MechanismConfig.full_model()
+    
+    # Only load state models if discrimination mechanism enabled
+    if not mechanism_config.state_discrimination_enabled:
+        load_state_models = False
+    
     programs = ['SNAP', 'TANF', 'SSI']
     reviewers = {}
     reviewer_id = 0
@@ -275,6 +291,7 @@ def create_reviewers(counties, acs_data=None, load_state_models=True, random_see
                 state=state,
                 capacity=50,
                 accuracy=0.85,
+                mechanism_config=mechanism_config,  # ADD THIS
                 state_model=state_model,  # STATE-SPECIFIC model!
                 acs_data=acs_data,
                 random_state=np.random.RandomState(random_seed + reviewer_id + 1000)
@@ -318,6 +335,13 @@ def run_month(seekers, evaluators, reviewers, month, ai_sorter=None):
     for reviewer in reviewers.values():
         reviewer.reset_monthly_capacity(month)
     
+    # === PERFORMANCE FIX: Create seeker lookup dict ===
+    # This changes O(n) search to O(1) lookup for each application
+    # Critical for large populations (100k+ seekers)
+    # With 182k seekers and ~10k applications/month, this saves ~1.8 billion comparisons!
+    seeker_dict = {s.id: s for s in seekers}
+    # === END PERFORMANCE FIX ===
+    
     # Statistics tracking
     stats = {
         'month': month,
@@ -354,16 +378,14 @@ def run_month(seekers, evaluators, reviewers, month, ai_sorter=None):
     
     stats['applications_submitted'] = len(applications)
     
-    # NEW: AI sorting (if enabled)
+    # NEW: AI sorting (if enabled) - reuses seeker_dict already created above
     if ai_sorter:
-        # Create seekers dict for need-based sorting
-        seekers_dict = {s.id: s for s in seekers}
-        applications = ai_sorter.sort_applications(applications, seekers_dict)
+        applications = ai_sorter.sort_applications(applications, seeker_dict)
     
     # Step 2: Process applications with correct evaluator for each county-program
     for app in applications:
-        # Get the seeker
-        seeker = next(s for s in seekers if s.id == app.seeker_id)
+        # Get the seeker (FAST: O(1) dict lookup instead of O(n) search)
+        seeker = seeker_dict[app.seeker_id]
         
         # Get the correct evaluator and reviewer for this county-program
         key = (seeker.county, app.program)

@@ -62,7 +62,7 @@ class Reviewer:
     FRAUD_COST_MULTIPLIER = 2.0  # Fraudsters pay double (maintaining lies is hard)
     
     def __init__(self, reviewer_id, county=None, state=None, capacity=50, accuracy=0.85, 
-                 state_model=None, acs_data=None, random_state=None):
+                 mechanism_config=None, state_model=None, acs_data=None, random_state=None):
         """
         Initialize a reviewer.
         
@@ -83,8 +83,21 @@ class Reviewer:
         self.accuracy = accuracy
         self.rng = random_state if random_state else np.random.RandomState()
         
-        # STATE-SPECIFIC statistical discrimination model
-        self.state_model = state_model  # One model per state (not national!)
+        # === MECHANISM CONTROLS ===
+        from core.mechanism_config import MechanismConfig
+        
+        # Default to full model if not specified
+        if mechanism_config is None:
+            mechanism_config = MechanismConfig.full_model()
+        self.mechanism_config = mechanism_config
+        
+        # State model: Only store and use if discrimination mechanism enabled
+        if self.mechanism_config.state_discrimination_enabled:
+            self.state_model = state_model
+        else:
+            self.state_model = None  # Don't use even if provided
+        # === END MECHANISM CONTROLS ===
+        
         self.acs_data = acs_data
         
         # COUNTY-SPECIFIC PATTERN LEARNING (removed - too granular)
@@ -221,6 +234,11 @@ class Reviewer:
         # Start with seeker's capacity
         remaining_points = seeker.bureaucracy_navigation_points
         
+        # If bureaucracy mechanism disabled, points are None (unlimited)
+        if remaining_points is None:
+            # Always pass investigation when mechanism disabled
+            return False
+        
         # Track whether credibility has been assessed (during contact)
         credibility_assessed = False
         credibility_multiplier = 1.0
@@ -329,6 +347,10 @@ class Reviewer:
         Returns:
             float: Investigation multiplier (0.8-1.3)
         """
+        # If state discrimination mechanism disabled, always return neutral
+        if not self.mechanism_config.state_discrimination_enabled:
+            return 1.0
+        
         if self.state_model is None or self.acs_data is None:
             return 1.0  # No model, neutral
         

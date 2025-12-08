@@ -211,7 +211,7 @@ class Evaluator:
             score += 0.2  # +20% for prior investigations
         
         # RED FLAG 5: Multiple past denials (NEW!)
-        if seeker and len(seeker.denial_history) > 0:
+        if seeker and seeker.denial_history is not None and len(seeker.denial_history) > 0:
             score += 0.1 * min(len(seeker.denial_history), 3)  # Up to +30%
         
         # Add random noise (evaluator judgment varies)
