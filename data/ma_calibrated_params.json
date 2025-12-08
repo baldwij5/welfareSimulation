@@ -1,0 +1,18 @@
+{
+  "state": "Massachusetts",
+  "calibration_date": "2025-12-06",
+  "seekers": 182311,
+  "capacity_mult_snap": 3.0,
+  "capacity_mult_tanf": 0.025,
+  "capacity_mult_ssi": 0.015,
+  "capacity_mult_reviewer": 0.05,
+  "calibration_method": "program_specific_10k",
+  "validation_tanf_target": 1215,
+  "validation_tanf_actual": 1263,
+  "validation_snap_target": 14013,
+  "validation_snap_actual": 10128,
+  "validation_ssi_target": 347,
+  "validation_ssi_actual": 562,
+  "mean_error": 0.3121150917019348,
+  "note": "Program-specific capacity multipliers. Apply to evaluators by program."
+}
