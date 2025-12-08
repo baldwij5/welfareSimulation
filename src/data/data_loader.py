@@ -336,6 +336,12 @@ def sample_for_county(cps_data, n_seekers, county_chars, random_seed=42):
         sampled_race = race_subset.iloc[sampled_indices]
         sampled_rows.extend(sampled_race.to_dict('records'))
     
+    # === CRITICAL FIX: Shuffle to randomize race order ===
+    # Without this, race assignments are deterministic (same order every seed)
+    # causing zero variance in racial disparity measurements
+    rng.shuffle(sampled_rows)
+    # === END FIX ===
+    
     # Verify
     sampled_white = sum(1 for r in sampled_rows if r['white'] == 1)
     sampled_black = sum(1 for r in sampled_rows if r['black'] == 1)
@@ -347,7 +353,7 @@ def sample_for_county(cps_data, n_seekers, county_chars, random_seed=42):
     return sampled_rows
 
 
-def cps_row_to_seeker(row, seeker_id, county='DEFAULT', random_state=None):
+def cps_row_to_seeker(row, seeker_id, county='DEFAULT', random_state=None, mechanism_config=None):
     """
     Convert a CPS row to a Seeker object.
     
@@ -393,7 +399,8 @@ def cps_row_to_seeker(row, seeker_id, county='DEFAULT', random_state=None):
         has_children=has_children,
         has_disability=has_disability,
         cps_data=row,  # ← Pass entire CPS row!
-        random_state=random_state
+        random_state=random_state,
+        mechanism_config=mechanism_config  # ADD THIS
     )
     
     # INITIALIZE ENROLLMENT based on CPS data!
@@ -409,7 +416,7 @@ def cps_row_to_seeker(row, seeker_id, county='DEFAULT', random_state=None):
     return seeker
 
 
-def create_realistic_population(cps_file, acs_file, n_seekers, counties, proportional=True, random_seed=42):
+def create_realistic_population(cps_file, acs_file, n_seekers, counties, proportional=True, random_seed=42, mechanism_config=None):
     """
     Create realistic population using CPS individuals weighted by ACS county demographics.
     
@@ -435,10 +442,16 @@ def create_realistic_population(cps_file, acs_file, n_seekers, counties, proport
         proportional: If True, allocate by eligible population (default: True)
                      If False, allocate equally across counties
         random_seed: Random seed
+        mechanism_config: MechanismConfig object for ablation studies
         
     Returns:
         list: Seeker objects with realistic characteristics
     """
+    from core.mechanism_config import MechanismConfig
+    
+    if mechanism_config is None:
+        mechanism_config = MechanismConfig.full_model()
+    
     rng = np.random.RandomState(random_seed)
     
     # Load data
@@ -463,7 +476,9 @@ def create_realistic_population(cps_file, acs_file, n_seekers, counties, proport
         print(f"\nEqual allocation: {seekers_per_county} seekers per county")
     
     all_seekers = []
-    seeker_id = 0
+    # FIX: Incorporate random_seed into starting ID to ensure uniqueness across iterations
+    # This prevents ID collisions in Monte Carlo experiments
+    seeker_id = random_seed * 1_000_000  # Start IDs at 42,000,000 for seed=42, etc.
     
     # For each county, sample with ACS-based weights
     for county_idx, county_name in enumerate(counties):
@@ -505,7 +520,8 @@ def create_realistic_population(cps_file, acs_file, n_seekers, counties, proport
                 person,
                 seeker_id=seeker_id,
                 county=county_name,
-                random_state=np.random.RandomState(random_seed + seeker_id)
+                random_state=np.random.RandomState(random_seed + seeker_id),
+                mechanism_config=mechanism_config  # ADD THIS
             )
             all_seekers.append(seeker)
             seeker_id += 1
