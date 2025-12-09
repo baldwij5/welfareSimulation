@@ -545,6 +545,13 @@ class Seeker:
         # Calculate complexity score
         application.complexity = self._calculate_complexity(application)
         
+        # NEW: Calculate documentation quality
+        application.documentation_quality = Application.calculate_documentation_quality(
+            self, 
+            is_fraud=committing_fraud,
+            is_error=making_error
+        )
+        
         return application
     
     def _calculate_complexity(self, application):

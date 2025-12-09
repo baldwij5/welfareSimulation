@@ -61,6 +61,10 @@ class Application:
     # Calculated during application creation
     complexity: Optional[float] = None
     
+    # NEW: Documentation quality (0.0 = poor, 1.0 = excellent)
+    # Reflects how well-prepared the application is
+    documentation_quality: Optional[float] = None
+    
     def get_income_discrepancy(self):
         """Calculate how much reported income differs from truth."""
         return self.true_income - self.reported_income
@@ -70,6 +74,106 @@ class Application:
         if self.true_income == 0:
             return 0.0
         return (self.true_income - self.reported_income) / self.true_income
+    
+    def get_quality_category(self):
+        """Return categorical quality label for documentation."""
+        if self.documentation_quality is None:
+            return 'Unknown'
+        elif self.documentation_quality >= 0.80:
+            return 'Excellent'
+        elif self.documentation_quality >= 0.65:
+            return 'Good'
+        elif self.documentation_quality >= 0.50:
+            return 'Fair'
+        elif self.documentation_quality >= 0.35:
+            return 'Poor'
+        else:
+            return 'Very Poor'
+    
+    @staticmethod
+    def calculate_documentation_quality(seeker, is_fraud=False, is_error=False):
+        """
+        Calculate application documentation quality (0.0-1.0).
+        
+        Quality reflects how well-prepared and complete the application is.
+        
+        Factors:
+        - Education (stronger effect - college grads better at forms)
+        - Prior experience (learning by doing)
+        - Employment (have documentation ready)
+        - Age (bureaucratic experience)
+        - Disability (potential barriers)
+        - Household size (documentation complexity)
+        - Fraud/error (inconsistencies reduce quality)
+        - Random variation (individual differences)
+        
+        Args:
+            seeker: Seeker object
+            is_fraud: Whether application is fraudulent
+            is_error: Whether application contains errors
+            
+        Returns:
+            float: Quality score 0.0 (poor) to 1.0 (excellent)
+        """
+        import numpy as np
+        
+        quality = 0.50  # Baseline (average)
+        
+        # EDUCATION (strongest predictor)
+        education = seeker.cps_data.get('education', 'unknown')
+        if education == 'graduate':
+            quality += 0.25
+        elif education == 'bachelors':
+            quality += 0.20
+        elif education == 'some_college':
+            quality += 0.10
+        elif education == 'high_school':
+            quality += 0.05
+        elif education == 'less_than_hs':
+            quality -= 0.10
+        
+        # EXPERIENCE (learning by doing)
+        if seeker.num_applications > 0:
+            experience_boost = min(0.15, 0.05 * seeker.num_applications)
+            quality += experience_boost
+        
+        # EMPLOYMENT (documentation available)
+        employment = seeker.cps_data.get('employment_status', 'unknown')
+        if employment in ['employed_full_time', 'employed_part_time']:
+            quality += 0.08
+        elif employment == 'unemployed':
+            quality -= 0.05
+        
+        # AGE (bureaucratic experience)
+        age = seeker.cps_data.get('age', 40)
+        if age >= 50:
+            quality += 0.05
+        elif age < 25:
+            quality -= 0.05
+        
+        # DISABILITY (potential barriers)
+        if seeker.has_disability:
+            quality -= 0.05
+        
+        # HOUSEHOLD SIZE (documentation complexity)
+        num_children = seeker.cps_data.get('num_children', 0)
+        if num_children >= 3:
+            quality -= 0.05
+        
+        # FRAUD PENALTY (inconsistencies)
+        if is_fraud:
+            quality -= 0.15
+        
+        # ERROR PENALTY (sloppiness)
+        if is_error:
+            quality -= 0.10
+        
+        # RANDOM VARIATION (individual differences)
+        random_component = seeker.rng.normal(0, 0.12)
+        quality += random_component
+        
+        # Clip to [0, 1]
+        return np.clip(quality, 0.0, 1.0)
     
     def __repr__(self):
         status = "FRAUD" if self.is_fraud else "ERROR" if self.is_error else "HONEST"

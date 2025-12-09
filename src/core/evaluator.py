@@ -74,11 +74,33 @@ class Evaluator:
         """
         Deduct complexity units for processing this application.
         
+        Quality affects processing time:
+        - Excellent (>0.80): 20% faster
+        - Good (>0.65): 10% faster  
+        - Poor (<0.50): 15% slower
+        - Very poor (<0.35): 30% slower
+        
         Args:
             application: Application that was processed
         """
         if application.complexity is not None:
-            self.capacity_used_this_month += application.complexity
+            # Start with base complexity
+            capacity_cost = application.complexity
+            
+            # NEW: Quality modifier
+            if hasattr(application, 'documentation_quality') and application.documentation_quality is not None:
+                quality = application.documentation_quality
+                
+                if quality >= 0.80:
+                    capacity_cost *= 0.80  # Excellent → 20% faster
+                elif quality >= 0.65:
+                    capacity_cost *= 0.90  # Good → 10% faster
+                elif quality < 0.35:
+                    capacity_cost *= 1.30  # Very poor → 30% slower
+                elif quality < 0.50:
+                    capacity_cost *= 1.15  # Poor → 15% slower
+            
+            self.capacity_used_this_month += capacity_cost
     
     def process_application(self, application, reviewer=None, seeker=None):
         """
@@ -213,6 +235,18 @@ class Evaluator:
         # RED FLAG 5: Multiple past denials (NEW!)
         if seeker and seeker.denial_history is not None and len(seeker.denial_history) > 0:
             score += 0.1 * min(len(seeker.denial_history), 3)  # Up to +30%
+        
+        # RED FLAG 6: Poor documentation quality (NEWEST!)
+        if hasattr(application, 'documentation_quality') and application.documentation_quality is not None:
+            quality = application.documentation_quality
+            
+            if quality < 0.30:
+                score += 0.30  # Very poor quality → very suspicious
+            elif quality < 0.50:
+                score += 0.15  # Poor quality → somewhat suspicious  
+            elif quality > 0.80:
+                score -= 0.10  # Excellent quality → reduces suspicion
+            # Fair quality (0.50-0.80): neutral
         
         # Add random noise (evaluator judgment varies)
         noise = self.rng.normal(0, 0.1)
