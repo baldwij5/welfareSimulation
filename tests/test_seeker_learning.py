@@ -143,7 +143,7 @@ class TestLearningBasedDecisions:
         seeker.application_threshold = 0.25
         
         # Should apply (80% > 25%)
-        assert seeker.should_apply('TANF', month=5) is True
+        assert seeker.should_apply('TANF', month=5) == True
     
     def test_does_not_apply_when_belief_low(self):
         """Test that seekers don't apply when belief below threshold."""
@@ -155,15 +155,18 @@ class TestLearningBasedDecisions:
         seeker.application_threshold = 0.25
         
         # Should NOT apply (15% < 25%)
-        assert seeker.should_apply('TANF', month=5) is False
+        assert seeker.should_apply('TANF', month=5) == False
     
     def test_learns_to_stop_applying_after_denials(self):
         """Test that seekers learn to stop applying after repeated denials."""
         seeker = Seeker(1, 'White', 1000, 'TEST', True, False,
                        random_state=np.random.RandomState(42))
         
-        # Start optimistic
-        assert seeker.should_apply('TANF', month=1) is True
+        # Start optimistic - should apply initially (high propensity)
+        # With stochastic, might not apply every single time, but should apply MOST times
+        # Test that they CAN apply (propensity > 0)
+        propensity = seeker.calculate_application_propensity('TANF', month=1)
+        assert propensity > 0.5, "Should have high propensity initially"
         
         # Three denials
         seeker.update_beliefs('TANF', 'DENIED')
@@ -176,7 +179,7 @@ class TestLearningBasedDecisions:
         # After 3 denials with learning_rate=0.3:
         # 0.60 → 0.42 → 0.29 → 0.20
         assert belief < seeker.application_threshold
-        assert seeker.should_apply('TANF', month=5) is False
+        assert seeker.should_apply('TANF', month=5) == False
 
 
 @pytest.mark.integration
@@ -199,8 +202,9 @@ class TestLearningEffects:
         final_belief = seeker.perceived_approval_probability['SNAP']
         assert final_belief > initial_belief
         
-        # Should definitely still apply
-        assert seeker.should_apply('SNAP', month=10) is True
+        # Should have high propensity to apply (though stochastic means not guaranteed every month)
+        propensity = seeker.calculate_application_propensity('SNAP', month=10)
+        assert propensity > 0.70, "Should have high propensity after successes"
     
     def test_discouraged_seekers_stop_trying(self):
         """Test discouraged worker effect - learn helplessness."""
@@ -211,8 +215,9 @@ class TestLearningEffects:
         for _ in range(5):
             seeker.update_beliefs('SNAP', 'DENIED')
         
-        # Should learn to stop trying
-        assert seeker.should_apply('SNAP', month=10) is False
+        # Should learn to stop trying - check low propensity
+        propensity = seeker.calculate_application_propensity('SNAP', month=10)
+        assert propensity < 0.40, f"Should have low propensity after many denials (got {propensity:.2f})"
         
         # Check belief is very low
         assert seeker.perceived_approval_probability['SNAP'] < 0.20

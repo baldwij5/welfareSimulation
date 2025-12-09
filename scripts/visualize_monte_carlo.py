@@ -1,19 +1,14 @@
 """
-Enhanced Monte Carlo Visualization with Administrative Outcomes
+Visualize Monte Carlo Results
 
-Creates detailed breakdown of application processing outcomes:
-- Honest vs fraud vs error applications
-- Approval/denial/escalation rates
-- Reviewer outcomes
-- False positive/negative rates
+Creates diagnostic plots for Monte Carlo validation.
 
 Usage:
-    python scripts/visualize_monte_carlo_enhanced.py
+    python scripts/visualize_monte_carlo.py
 
 Output:
-    - Administrative outcomes table (console + CSV)
-    - Detailed processing breakdown figure
-    - Fraud detection performance metrics
+    - results/visualizations/monte_carlo_variance.png
+    - results/visualizations/monte_carlo_all_effects.png
 
 Author: Jack Baldwin
 Date: December 2024
@@ -22,14 +17,10 @@ Date: December 2024
 import warnings
 warnings.filterwarnings('ignore')
 
-import sys
-sys.path.insert(0, 'src')
-
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import argparse
 from pathlib import Path
 
 # Set style
@@ -37,216 +28,197 @@ plt.style.use('seaborn-v0_8-paper')
 plt.rcParams['figure.dpi'] = 300
 
 
-def load_monte_carlo_results(results_file):
-    """Load and validate Monte Carlo results."""
-    if not Path(results_file).exists():
-        print(f"❌ Results file not found: {results_file}")
-        print(f"   Run Monte Carlo first")
-        return None
+def plot_variance_diagnostic(df, output_file):
+    """Plot showing variance across iterations."""
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     
-    df = pd.read_csv(results_file)
-    print(f"✓ Loaded {len(df)} iterations")
+    # Top-left: Race effect over iterations
+    ax = axes[0, 0]
+    ax.plot(df['iteration'], df['race_effect'] * 100, 
+            'o-', linewidth=2, markersize=8, color='#e74c3c', alpha=0.7)
+    ax.axhline(y=df['race_effect'].mean() * 100, 
+               color='black', linestyle='--', linewidth=2, label='Mean')
+    ax.fill_between(
+        df['iteration'],
+        (df['race_effect'].mean() - df['race_effect'].std()) * 100,
+        (df['race_effect'].mean() + df['race_effect'].std()) * 100,
+        alpha=0.2, color='gray', label='±1 SD'
+    )
+    ax.set_xlabel('Iteration', fontweight='bold')
+    ax.set_ylabel('Race Effect (pp)', fontweight='bold')
+    ax.set_title('Effect Across Iterations', fontweight='bold')
+    ax.grid(alpha=0.3)
+    ax.legend()
     
-    return df
-
-
-def extract_administrative_outcomes(results_file):
+    # Top-right: Distribution histogram
+    ax = axes[0, 1]
+    ax.hist(df['race_effect'] * 100, bins=15, 
+            color='#3498db', alpha=0.7, edgecolor='black')
+    ax.axvline(df['race_effect'].mean() * 100, 
+               color='red', linestyle='--', linewidth=2, label='Mean')
+    ax.set_xlabel('Race Effect (pp)', fontweight='bold')
+    ax.set_ylabel('Frequency', fontweight='bold')
+    ax.set_title('Distribution of Effects', fontweight='bold')
+    ax.legend()
+    ax.grid(alpha=0.3)
+    
+    # Bottom-left: Control vs Treatment gaps
+    ax = axes[1, 0]
+    ax.scatter(df['control_race_gap'] * 100, df['treatment_race_gap'] * 100,
+              s=100, alpha=0.6, color='#2ecc71', edgecolor='black')
+    
+    # Add diagonal line (no effect)
+    lims = [
+        min(ax.get_xlim()[0], ax.get_ylim()[0]),
+        max(ax.get_xlim()[1], ax.get_ylim()[1])
+    ]
+    ax.plot(lims, lims, 'k--', alpha=0.5, linewidth=1, label='No AI effect')
+    
+    ax.set_xlabel('Control Gap (pp)', fontweight='bold')
+    ax.set_ylabel('Treatment Gap (pp)', fontweight='bold')
+    ax.set_title('Treatment vs Control Disparity', fontweight='bold')
+    ax.legend()
+    ax.grid(alpha=0.3)
+    
+    # Bottom-right: Variance metrics
+    ax = axes[1, 1]
+    ax.axis('off')
+    
+    # Calculate variance metrics
+    mean_effect = df['race_effect'].mean()
+    std_effect = df['race_effect'].std()
+    cv = std_effect / abs(mean_effect) if mean_effect != 0 else float('inf')
+    min_effect = df['race_effect'].min()
+    max_effect = df['race_effect'].max()
+    range_effect = max_effect - min_effect
+    
+    stats_text = f"""
+    VARIANCE DIAGNOSTICS
+    {'─'*40}
+    
+    Mean Effect:     {mean_effect*100:+.2f}pp
+    Std Dev:         {std_effect*100:.4f}pp
+    CV:              {cv:.3f}
+    Range:           {range_effect*100:.4f}pp
+    Min:             {min_effect*100:+.2f}pp
+    Max:             {max_effect*100:+.2f}pp
+    
+    N iterations:    {len(df)}
+    
+    {'─'*40}
+    ASSESSMENT:
     """
-    Extract detailed administrative outcomes from Monte Carlo results.
     
-    NOTE: This requires running Monte Carlo with detailed tracking.
-    If your current results don't have this data, we'll need to add
-    tracking to monte_carlo_ma_progress.py and re-run.
-    
-    Returns:
-        DataFrame with detailed outcomes or None if data not available
-    """
-    # Check if detailed results file exists
-    detailed_file = results_file.replace('.csv', '_detailed.csv')
-    
-    if Path(detailed_file).exists():
-        return pd.read_csv(detailed_file)
+    # Diagnostic assessment
+    if std_effect < 0.0001:
+        assessment = "❌ ZERO variance - BUG!"
+    elif std_effect < 0.001:
+        assessment = "⚠️  Very low variance"
+    elif std_effect > 0.05:
+        assessment = "⚠️  High variance (noisy)"
     else:
-        print(f"⚠️  Detailed outcomes file not found: {detailed_file}")
-        print(f"   Need to add detailed tracking to Monte Carlo script")
-        return None
-
-
-def create_administrative_outcomes_table(control_stats, treatment_stats, output_file=None):
-    """
-    Create detailed table showing application processing outcomes.
+        assessment = "✓ Healthy variance"
     
-    Args:
-        control_stats: Dict with control world statistics
-        treatment_stats: Dict with treatment world statistics
-        output_file: Optional path to save figure
-        
-    Returns:
-        DataFrame with outcomes table
-    """
-    # Structure of outcomes table
-    table_data = {
-        'Application Type': [
-            'Honest Applications',
-            '  → Approved',
-            '  → Denied',
-            '  → Escalated',
-            '',
-            'Fraud Applications',
-            '  → Approved (missed)',
-            '  → Denied (caught)',
-            '  → Escalated',
-            '',
-            'Error Applications',
-            '  → Approved',
-            '  → Denied',
-            '  → Escalated',
-            '',
-            'TOTAL Applications',
-        ],
-        'Control (FCFS)': [],
-        'Treatment (AI)': [],
-        'Difference': []
-    }
+    stats_text += assessment
     
-    # This will be populated from detailed results
-    # For now, showing the structure
+    ax.text(0.1, 0.5, stats_text, 
+            fontsize=11, family='monospace',
+            verticalalignment='center',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
     
-    df = pd.DataFrame(table_data)
-    
-    if output_file:
-        # Create figure version
-        fig, ax = plt.subplots(figsize=(12, 10))
-        ax.axis('tight')
-        ax.axis('off')
-        
-        # Create table
-        table = ax.table(
-            cellText=df.values,
-            colLabels=df.columns,
-            cellLoc='left',
-            loc='center',
-            colWidths=[0.4, 0.2, 0.2, 0.2]
-        )
-        
-        table.auto_set_font_size(False)
-        table.set_fontsize(9)
-        table.scale(1, 2)
-        
-        # Style header
-        for i in range(len(df.columns)):
-            cell = table[(0, i)]
-            cell.set_facecolor('#2c3e50')
-            cell.set_text_props(weight='bold', color='white')
-        
-        plt.title('Administrative Outcomes: Control vs Treatment',
-                 fontsize=14, fontweight='bold', pad=20)
-        plt.savefig(output_file, dpi=300, bbox_inches='tight')
-        print(f"✓ Created: {output_file}")
-    
-    return df
-
-
-def create_processing_flowchart(stats, output_file):
-    """
-    Create Sankey-style flowchart showing application processing.
-    
-    Shows:
-      Applications → Evaluator → [Approved/Denied/Escalated]
-                              ↓
-      Escalated → Reviewer → [Approved/Denied]
-    """
-    # This would create a Sankey diagram
-    # Showing flow from applications through system
-    
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
-    
-    # Left: Control world
-    ax1.set_title('Control (FCFS)', fontsize=14, fontweight='bold')
-    # ... create flowchart ...
-    
-    # Right: Treatment world  
-    ax2.set_title('Treatment (AI Sorting)', fontsize=14, fontweight='bold')
-    # ... create flowchart ...
-    
+    plt.suptitle('Monte Carlo Variance Diagnostic', 
+                fontsize=16, fontweight='bold')
     plt.tight_layout()
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     print(f"✓ Created: {output_file}")
-
-
-def calculate_fraud_detection_metrics(df):
-    """
-    Calculate fraud detection performance metrics.
     
-    Metrics:
-    - True Positive Rate (fraud caught / total fraud)
-    - False Positive Rate (honest denied / total honest)
-    - Precision (fraud caught / total denied)
-    - F1 Score
-    """
-    # This requires detailed tracking in Monte Carlo
-    pass
+    return fig
+
+
+def plot_all_effects(df, output_file):
+    """Plot all 4 effects."""
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    
+    effects = [
+        ('race_effect', 'Race (White-Black)', axes[0, 0], '#e74c3c'),
+        ('education_effect', 'Education (College-<HS)', axes[0, 1], '#3498db'),
+        ('employment_effect', 'Employment (Employed-Unemployed)', axes[1, 0], '#2ecc71'),
+        ('disability_effect', 'Disability (No Disability-Has Disability)', axes[1, 1], '#f39c12')
+    ]
+    
+    for effect_col, title, ax, color in effects:
+        if effect_col in df.columns:
+            values = df[effect_col] * 100
+            mean_val = values.mean()
+            std_val = values.std()
+            
+            ax.plot(df['iteration'], values, 
+                   'o-', linewidth=2, markersize=6, color=color, alpha=0.7)
+            ax.axhline(y=mean_val, color='black', linestyle='--', linewidth=2)
+            ax.fill_between(
+                df['iteration'],
+                mean_val - std_val,
+                mean_val + std_val,
+                alpha=0.2, color='gray'
+            )
+            
+            ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5, alpha=0.5)
+            ax.set_xlabel('Iteration', fontweight='bold')
+            ax.set_ylabel('Effect (pp)', fontweight='bold')
+            ax.set_title(f'{title}\nMean: {mean_val:+.2f}pp ± {std_val:.2f}pp', 
+                        fontweight='bold')
+            ax.grid(alpha=0.3)
+    
+    plt.suptitle('AI Effects on Multiple Disparities', 
+                fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    print(f"✓ Created: {output_file}")
+    
+    return fig
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Enhanced Monte Carlo visualization with administrative outcomes'
-    )
-    parser.add_argument(
-        '--results',
-        default='results/monte_carlo_ma_results.csv',
-        help='Path to Monte Carlo results'
-    )
-    args = parser.parse_args()
+    results_file = 'results/monte_carlo_ma_results.csv'
     
-    print("="*70)
-    print("ENHANCED MONTE CARLO VISUALIZATION")
-    print("="*70)
-    
-    # Load results
-    df = load_monte_carlo_results(args.results)
-    if df is None:
+    if not Path(results_file).exists():
+        print(f"❌ Results not found: {results_file}")
         return
+    
+    print("="*70)
+    print("VISUALIZING MONTE CARLO RESULTS")
+    print("="*70)
+    
+    df = pd.read_csv(results_file)
+    print(f"✓ Loaded {len(df)} iterations")
     
     # Create output directory
     output_dir = Path('results/visualizations')
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Try to load detailed outcomes
-    detailed = extract_administrative_outcomes(args.results)
-    
-    if detailed is None:
-        print(f"\n{'='*70}")
-        print("NOTE: Detailed Tracking Not Available")
-        print("="*70)
-        print(f"\nYour current Monte Carlo results don't include detailed")
-        print(f"application-level tracking (honest/fraud/error breakdowns).")
-        print(f"\nTo get this data, we need to:")
-        print(f"  1. Add detailed tracking to monte_carlo_ma_progress.py")
-        print(f"  2. Save application-level statistics per iteration")
-        print(f"  3. Re-run Monte Carlo (or extract from next run)")
-        print(f"\nFor now, creating visualizations from available data...")
-    else:
-        print(f"✓ Loaded detailed outcomes: {len(detailed)} records")
-        
-        # Create detailed tables and figures
-        create_administrative_outcomes_table(
-            detailed[detailed['world'] == 'control'].iloc[0],
-            detailed[detailed['world'] == 'treatment'].iloc[0],
-            output_dir / 'administrative_outcomes_table.png'
-        )
-    
-    # Create standard visualizations (these work with current data)
-    from visualize_monte_carlo import (
-        plot_variance_diagnostic,
-        plot_all_effects
-    )
+    print(f"\nCreating visualizations...")
     
     plot_variance_diagnostic(df, output_dir / 'monte_carlo_variance.png')
     plot_all_effects(df, output_dir / 'monte_carlo_all_effects.png')
     
+    # Variance check
+    std_race = df['race_effect'].std()
     print(f"\n{'='*70}")
-    print("VISUALIZATION COMPLETE")
+    print("VARIANCE CHECK")
+    print("="*70)
+    print(f"Race effect std dev: {std_race*100:.4f}pp")
+    
+    if std_race < 0.0001:
+        print(f"❌ ZERO variance - seed bug still present!")
+    elif std_race < 0.001:
+        print(f"⚠️  Very low variance ({std_race*100:.4f}pp)")
+    elif std_race > 0.05:
+        print(f"⚠️  High variance ({std_race*100:.2f}pp)")
+    else:
+        print(f"✓ Healthy variance ({std_race*100:.4f}pp)")
+    
+    print(f"\n{'='*70}")
+    print("COMPLETE")
     print("="*70)
     print(f"\nFigures saved to: {output_dir}/")
 

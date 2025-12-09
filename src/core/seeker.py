@@ -316,16 +316,88 @@ class Seeker:
         return (f"Seeker(id={self.id}, race={self.race}, "
                 f"income=${self.income:,.0f}, children={self.has_children})")
     
+    def calculate_application_propensity(self, program, month):
+        """
+        Calculate probability of applying this month (0-1).
+        
+        NEW: Stochastic decision model instead of hard threshold.
+        
+        Factors:
+        1. Perceived approval probability (learned from experience)
+        2. Application threshold (personal decision point)
+        3. Desperation (low income → must try despite low odds)
+        4. Prior success (positive reinforcement)
+        5. Random variation (mood, circumstances, life events)
+        
+        Returns:
+            float: Propensity to apply (0.0 = never, 1.0 = definitely)
+        """
+        perceived_prob = self.perceived_approval_probability[program]
+        threshold = self.application_threshold
+        
+        # === BASE PROPENSITY (from beliefs vs threshold) ===
+        if perceived_prob < threshold:
+            # Below threshold: Low but non-zero chance
+            # Desperate people still try despite low expectations
+            base_propensity = perceived_prob * 0.3
+        else:
+            # Above threshold: Scales from 0 to 1 as confidence increases
+            # Linear interpolation: threshold → 0.0, 1.0 → 1.0
+            base_propensity = (perceived_prob - threshold) / (1.0 - threshold)
+        
+        # === DESPERATION BOOST (economic need) ===
+        # Very low income → apply even with low expectations
+        monthly_income = self.get_monthly_income()
+        
+        if monthly_income < 500:
+            base_propensity += 0.25  # Desperate (must eat!)
+        elif monthly_income < 1000:
+            base_propensity += 0.15  # Very tight
+        elif monthly_income < 1500:
+            base_propensity += 0.08  # Struggling
+        
+        # === SUCCESS REINFORCEMENT ===
+        # Prior approvals → more likely to apply again
+        if self.num_approvals > 0:
+            success_rate = self.num_approvals / max(1, self.num_applications)
+            base_propensity += success_rate * 0.12  # Up to +12% if 100% success
+        
+        # === CHILDREN BOOST (need for family) ===
+        # Parents more motivated to apply (feed kids)
+        if self.has_children:
+            base_propensity += 0.10
+        
+        # === DISABILITY NEED ===
+        # Medical costs → more desperate for SSI
+        if program == 'SSI' and self.has_disability:
+            base_propensity += 0.15  # Medical need
+        
+        # === RANDOM VARIATION (individual differences) ===
+        # Some people persistent, some give up easily
+        # Use month-specific randomness (same month = same decision)
+        random_seed = self.id + month + 777  # Unique per seeker per month
+        month_rng = np.random.RandomState(random_seed)
+        random_component = month_rng.normal(0, 0.15)
+        base_propensity += random_component
+        
+        # Clip to valid probability
+        propensity = np.clip(base_propensity, 0.0, 1.0)
+        
+        return propensity
+    
     def should_apply(self, program, month):
         """
         Decide whether to apply for a benefit program.
         
-        LEARNING-BASED DECISION:
-        1. Check if banned (fraud history)
-        2. Check eligibility  
-        3. Check if already enrolled (or recert needed)
-        4. Get belief about approval probability
-        5. Apply only if probability > threshold (learned behavior)
+        NEW: STOCHASTIC DECISION MODEL
+        1. Check hard constraints (banned, ineligible, enrolled)
+        2. Calculate propensity to apply (0-1 probability)
+        3. Make stochastic decision (random draw < propensity)
+        
+        This is more realistic than hard threshold:
+        - Continuous probability (not binary)
+        - Month-to-month variation (sometimes apply, sometimes don't)
+        - Desperation, success history, random factors all matter
         
         Args:
             program: Which program ('SNAP', 'TANF', 'SSI')
@@ -362,21 +434,25 @@ class Seeker:
             if months_since_approval >= recert_period:
                 # Remove from enrollment (expired)
                 del self.enrolled_programs[program]
-                # Fall through to learning-based decision
+                # Fall through to propensity-based decision
             else:
                 # Still enrolled, don't apply yet
                 return False
         
-        # CHECK 4: LEARNING-BASED DECISION
-        # Get current belief about approval probability
-        perceived_prob = self.perceived_approval_probability[program]
+        # CHECK 4: STOCHASTIC APPLICATION DECISION (NEW!)
+        # Calculate propensity to apply (0-1)
+        propensity = self.calculate_application_propensity(program, month)
         
-        # Apply only if expected probability exceeds threshold
-        # (Accounts for application costs: time, paperwork, stigma)
-        if perceived_prob > self.application_threshold:
-            return True  # Worth trying
-        else:
-            return False  # Learned it's not worth the effort
+        # Make stochastic decision
+        # Use month-specific randomness (reproducible)
+        decision_seed = self.id + month + 888
+        decision_rng = np.random.RandomState(decision_seed)
+        random_draw = decision_rng.random()
+        
+        # Apply if random draw < propensity
+        # High propensity (0.9) → 90% chance of applying
+        # Low propensity (0.1) → 10% chance of applying
+        return random_draw < propensity
     
     def enroll_in_program(self, program, month):
         """
